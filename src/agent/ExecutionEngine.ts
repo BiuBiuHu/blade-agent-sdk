@@ -29,10 +29,16 @@ export class ExecutionEngine {
   private chatService: IChatService;
   private contextManager: ContextManager;
   private memoryAdapter: MemoryMessageAdapter;
+  private readonly projectPath?: string;
 
-  constructor(chatService: IChatService, contextManager?: ContextManager) {
+  constructor(
+    chatService: IChatService,
+    contextManager?: ContextManager,
+    projectPath?: string,
+  ) {
     this.chatService = chatService;
-    this.contextManager = contextManager || new ContextManager();
+    this.projectPath = projectPath;
+    this.contextManager = contextManager || new ContextManager({ projectPath });
     this.memoryAdapter = this.createMemoryAdapter();
   }
 

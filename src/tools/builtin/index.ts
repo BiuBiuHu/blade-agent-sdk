@@ -45,6 +45,7 @@ export async function getBuiltinTools(opts?: {
   sessionId?: string;
   configDir?: string;
   mcpRegistry?: McpRegistry;
+  includeMcpProtocolTools?: boolean;
 }): Promise<Tool[]> {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
   const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
@@ -72,7 +73,9 @@ export async function getBuiltinTools(opts?: {
   ] as Tool<unknown>[];
 
   // 添加 MCP 协议工具
-  const mcpTools = opts?.mcpRegistry ? await getMcpTools(opts.mcpRegistry) : [];
+  const mcpTools = opts?.mcpRegistry && opts.includeMcpProtocolTools !== false
+    ? await getMcpTools(opts.mcpRegistry)
+    : [];
 
   return [...builtinTools, ...mcpTools];
 }

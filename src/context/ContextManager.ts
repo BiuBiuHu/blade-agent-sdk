@@ -30,6 +30,7 @@ export class ContextManager {
   private readonly compressor: ContextCompressor;
   private readonly filter: ContextFilter;
   private readonly options: ContextManagerOptions;
+  private readonly projectPath: string;
 
   private currentSessionId: string | null = null;
   private initialized = false;
@@ -55,12 +56,13 @@ export class ContextManager {
       },
       compressionThreshold: options.compressionThreshold || 6000,
       enableVectorSearch: options.enableVectorSearch || false,
+      projectPath: options.projectPath || process.cwd(),
     };
+    this.projectPath = this.options.projectPath || process.cwd();
 
     // 初始化存储层
     this.memory = new MemoryStore(this.options.storage.maxMemorySize);
-    // PersistentStore 现在使用项目路径，默认为当前工作目录
-    this.persistent = new PersistentStore(process.cwd(), 100);
+    this.persistent = new PersistentStore(this.projectPath, 100);
     this.cache = new CacheStore(
       this.options.storage.cacheSize,
       5 * 60 * 1000 // 5分钟默认TTL

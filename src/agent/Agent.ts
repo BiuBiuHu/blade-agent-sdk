@@ -52,36 +52,58 @@ import type {
 
 const logger = createLogger(LogCategory.AGENT);
 
+export interface AgentRuntimeDeps {
+  executionPipeline?: ExecutionPipeline;
+  contextManager?: ContextManager;
+  workspaceRoot?: string;
+  mcpRegistry?: McpRegistry;
+  runtimeManaged?: boolean;
+}
+
 export class Agent {
   private config: BladeConfig;
   private runtimeOptions: AgentOptions;
   private isInitialized = false;
   private activeTask?: AgentTask;
   private executionPipeline: ExecutionPipeline;
+  private readonly workspaceRoot: string;
+  private readonly runtimeManaged: boolean;
+  private readonly runtimeMcpRegistry?: McpRegistry;
 
   // 子模块
   private modelManager: ModelManager;
   private planExecutor: PlanExecutor;
   private loopRunner!: LoopRunner;
   private attachmentHandler?: AttachmentHandler;
-  private mcpRegistry: McpRegistry;
 
   constructor(
     config: BladeConfig,
     runtimeOptions: AgentOptions = {},
-    executionPipeline?: ExecutionPipeline,
+    deps: AgentRuntimeDeps = {},
   ) {
     this.config = config;
     this.runtimeOptions = runtimeOptions;
-    this.executionPipeline = executionPipeline || this.createDefaultPipeline();
-    this.modelManager = new ModelManager(config, runtimeOptions.outputFormat);
+    this.executionPipeline = deps.executionPipeline || this.createDefaultPipeline();
+    this.workspaceRoot = deps.workspaceRoot || process.cwd();
+    this.runtimeManaged = deps.runtimeManaged ?? false;
+    this.runtimeMcpRegistry =
+      deps.mcpRegistry || (!this.runtimeManaged ? new McpRegistry() : undefined);
+    this.modelManager = new ModelManager(
+      config,
+      runtimeOptions.outputFormat,
+      deps.contextManager,
+      this.workspaceRoot,
+    );
     this.planExecutor = new PlanExecutor(config.language);
-    this.mcpRegistry = new McpRegistry();
   }
 
   // ===== 静态工厂 =====
 
-  static async create(config: BladeConfig, options: AgentOptions = {}): Promise<Agent> {
+  static async create(
+    config: BladeConfig,
+    options: AgentOptions = {},
+    deps: AgentRuntimeDeps = {},
+  ): Promise<Agent> {
     const models = config.models || [];
     if (models.length === 0) {
       throw new Error(
@@ -93,7 +115,7 @@ export class Agent {
       );
     }
 
-    const agent = new Agent(config, options);
+    const agent = new Agent(config, options, deps);
     await agent.initialize();
 
     if (options.toolWhitelist && options.toolWhitelist.length > 0) {
@@ -114,8 +136,9 @@ export class Agent {
       // 1. 验证系统提示配置
       await this.initializeSystemPrompt();
 
-      // 2. 注册内置工具
-      await this.registerBuiltinTools();
+      if (!this.runtimeManaged) {
+        await this.registerBuiltinTools();
+      }
 
       // 3. 加载 subagent 配置
       await this.loadSubagents();
@@ -128,7 +151,7 @@ export class Agent {
       await this.modelManager.applyModelConfig(modelConfig, '🚀 使用模型:');
 
       // 6. 初始化处理器
-      this.attachmentHandler = new AttachmentHandler(process.cwd());
+      this.attachmentHandler = new AttachmentHandler(this.workspaceRoot);
       const streamHandler = new StreamResponseHandler(
         () => this.modelManager.getChatService()
       );
@@ -369,6 +392,10 @@ export class Agent {
     this.loopRunner.clearSkillContext();
   }
 
+  public async setModel(model: string): Promise<void> {
+    await this.modelManager.setModel(model);
+  }
+
   /** @deprecated 建议通过 context.systemPrompt 传入 */
   public async getSystemPrompt(): Promise<string | undefined> {
     return this.loopRunner.buildSystemPromptOnDemand();
@@ -428,7 +455,7 @@ export class Agent {
   private async initializeSystemPrompt(): Promise<void> {
     try {
       const result = await buildSystemPrompt({
-        projectPath: process.cwd(),
+        projectPath: this.workspaceRoot,
         replaceDefault: this.runtimeOptions.systemPrompt,
         append: this.runtimeOptions.appendSystemPrompt,
         includeEnvironment: false,
@@ -446,60 +473,47 @@ export class Agent {
   }
 
   private async registerBuiltinTools(): Promise<void> {
-    try {
-      const builtinTools = await getBuiltinTools({
-        sessionId: 'default',
-        configDir: path.join(os.homedir(), '.blade'),
-        mcpRegistry: this.mcpRegistry,
-      });
-      logger.debug(`📦 Registering ${builtinTools.length} builtin tools...`);
-      this.executionPipeline.getRegistry().registerAll(builtinTools);
-      const registeredCount = this.executionPipeline.getRegistry().getAll().length;
-      logger.debug(`✅ Builtin tools registered: ${registeredCount} tools`);
-      logger.debug(
-        `[Tools] ${this.executionPipeline.getRegistry().getAll().map((t) => t.name).join(', ')}`
-      );
-      await this.registerMcpTools();
-    } catch (error) {
-      logger.error('Failed to register builtin tools:', error);
-      throw error;
+    const builtinTools = await getBuiltinTools({
+      sessionId: 'default',
+      configDir: path.join(os.homedir(), '.blade'),
+      mcpRegistry: this.runtimeMcpRegistry,
+      includeMcpProtocolTools: false,
+    });
+    if (builtinTools.length === 0) {
+      logger.debug('📦 No builtin tools available');
+      return;
     }
-  }
+    this.executionPipeline.getRegistry().registerAll(builtinTools);
 
-  private async registerMcpTools(): Promise<void> {
-    try {
-      const mcpServers: Record<string, McpServerConfig> = this.config.mcpServers || {};
-      const targetServerNames = new Set<string>(Object.keys(mcpServers));
-      for (const name of this.config.inProcessMcpServerNames || []) {
-        targetServerNames.add(name);
+    if (this.runtimeManaged || !this.runtimeMcpRegistry) {
+      return;
+    }
+
+    const mcpServers: Record<string, McpServerConfig> = this.config.mcpServers || {};
+    const targetServerNames = new Set<string>(Object.keys(mcpServers));
+    for (const name of this.config.inProcessMcpServerNames || []) {
+      targetServerNames.add(name);
+    }
+    if (targetServerNames.size === 0) {
+      return;
+    }
+
+    for (const [name, config] of Object.entries(mcpServers)) {
+      if (config.disabled) {
+        continue;
       }
-      if (targetServerNames.size === 0) {
-        logger.debug('📦 No MCP servers configured');
-        return;
+      try {
+        await this.runtimeMcpRegistry.registerServer(name, config);
+      } catch (error) {
+        logger.warn(`⚠️  MCP server "${name}" connection failed:`, error);
       }
-      const registry = this.mcpRegistry;
-      for (const [name, config] of Object.entries(mcpServers)) {
-        if (config.disabled) {
-          logger.debug(`⏭️ MCP server "${name}" is disabled, skipping`);
-          continue;
-        }
-        try {
-          logger.debug(`🔌 Connecting to MCP server: ${name}`);
-          await registry.registerServer(name, config);
-          logger.debug(`✅ MCP server "${name}" connected`);
-        } catch (error) {
-          logger.warn(`⚠️  MCP server "${name}" connection failed:`, error);
-        }
-      }
-      const mcpTools = await registry.getAvailableToolsByServerNames(Array.from(targetServerNames));
-      if (mcpTools.length > 0) {
-        this.executionPipeline.getRegistry().registerAll(mcpTools);
-        logger.debug(`✅ Registered ${mcpTools.length} MCP tools`);
-      } else {
-        logger.debug('📦 No MCP tools available');
-      }
-    } catch (error) {
-      logger.warn('Failed to register MCP tools:', error);
+    }
+
+    const mcpTools = await this.runtimeMcpRegistry.getAvailableToolsByServerNames(
+      Array.from(targetServerNames),
+    );
+    for (const tool of mcpTools) {
+      this.executionPipeline.getRegistry().registerMcpTool(tool);
     }
   }
 
@@ -522,7 +536,7 @@ export class Agent {
 
   private async discoverSkills(): Promise<void> {
     try {
-      const result = await discoverSkills({ cwd: process.cwd() });
+      const result = await discoverSkills({ cwd: this.workspaceRoot });
       if (result.skills.length > 0) {
         logger.debug(`✅ Discovered ${result.skills.length} skills: ${result.skills.map((s) => s.name).join(', ')}`);
       } else {

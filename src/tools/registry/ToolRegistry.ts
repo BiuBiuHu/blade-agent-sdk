@@ -58,20 +58,32 @@ export class ToolRegistry extends EventEmitter {
    * 注销工具
    */
   unregister(name: string): boolean {
-    const tool = this.tools.get(name);
-    if (!tool) {
+    const builtinTool = this.tools.get(name);
+    if (builtinTool) {
+      this.tools.delete(name);
+      this.removeFromIndexes(builtinTool);
+
+      this.emit('toolUnregistered', {
+        type: 'builtin',
+        toolName: name,
+        timestamp: Date.now(),
+      });
+
+      return true;
+    }
+
+    const mcpTool = this.mcpTools.get(name);
+    if (!mcpTool) {
       return false;
     }
 
-    this.tools.delete(name);
-    this.removeFromIndexes(tool);
-
+    this.mcpTools.delete(name);
+    this.removeFromIndexes(mcpTool);
     this.emit('toolUnregistered', {
-      type: 'builtin',
+      type: 'mcp',
       toolName: name,
       timestamp: Date.now(),
     });
-
     return true;
   }
 
@@ -301,10 +313,10 @@ export class ToolRegistry extends EventEmitter {
    */
   removeMcpTools(serverName: string): number {
     let removedCount = 0;
-    const prefix = `mcp__${serverName}__`;
+    const legacyPrefix = `mcp__${serverName}__`;
 
     for (const [name, tool] of this.mcpTools.entries()) {
-      if (name.startsWith(prefix)) {
+      if (tool.tags.includes(serverName) || name.startsWith(legacyPrefix)) {
         this.mcpTools.delete(name);
         this.removeFromIndexes(tool);
         removedCount++;

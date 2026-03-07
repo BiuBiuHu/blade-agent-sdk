@@ -172,7 +172,9 @@ export class McpRegistry extends EventEmitter {
     }
 
     await serverInfo.client.disconnect();
+    serverInfo.status = McpConnectionStatus.DISCONNECTED;
     serverInfo.connectedAt = undefined;
+    serverInfo.tools = [];
   }
 
   /**

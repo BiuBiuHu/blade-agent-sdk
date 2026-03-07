@@ -15,6 +15,7 @@ import type {
   OutputFormat,
 } from '../types/common.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
+import type { ContextManager } from '../context/ContextManager.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -24,11 +25,18 @@ export class ModelManager {
   private executionEngine!: ExecutionEngine;
   private currentModelId?: string;
   private currentModelMaxContextTokens!: number;
+  private readonly contextManager?: ContextManager;
+  private readonly projectPath?: string;
 
   constructor(
     private config: BladeConfig,
     private outputFormat?: OutputFormat,
-  ) {}
+    contextManager?: ContextManager,
+    projectPath?: string,
+  ) {
+    this.contextManager = contextManager;
+    this.projectPath = projectPath;
+  }
 
   // ===== Getters =====
 
@@ -91,9 +99,15 @@ export class ModelManager {
       outputFormat: this.outputFormat,
     });
 
-    const contextManager = this.executionEngine?.getContextManager();
-    this.executionEngine = new ExecutionEngine(this.chatService, contextManager);
+    const contextManager =
+      this.executionEngine?.getContextManager() || this.contextManager;
+    this.executionEngine = new ExecutionEngine(
+      this.chatService,
+      contextManager,
+      this.projectPath,
+    );
     this.currentModelId = modelConfig.id;
+    this.config.currentModelId = modelConfig.id;
   }
 
   // ===== 模型切换 =====
@@ -107,5 +121,27 @@ export class ModelManager {
       return;
     }
     await this.applyModelConfig(modelConfig, '🔁 切换模型');
+  }
+
+  async setModel(model: string): Promise<void> {
+    const normalized = model.trim();
+    if (!normalized) return;
+
+    const models = this.config.models || [];
+    const matchedModel = models.find((candidate) =>
+      candidate.id === normalized
+      || candidate.model === normalized
+      || candidate.name === normalized,
+    );
+
+    if (matchedModel) {
+      await this.applyModelConfig(matchedModel, '🔁 切换模型');
+      return;
+    }
+
+    const activeModel = this.resolveModelConfig(this.currentModelId);
+    activeModel.model = normalized;
+    activeModel.name = normalized;
+    await this.applyModelConfig(activeModel, '🔁 更新模型');
   }
 }
