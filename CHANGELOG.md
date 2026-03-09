@@ -2,6 +2,10 @@
 
 本文件记录 @blade-ai/agent-sdk 的所有重要变更。
 
+## [0.1.15] - 2026-03-09
+
+- 14ea476 test(SessionOpenAIConfig): 简化测试用例并移除不必要的模拟
+- 986975f feat(openai): 添加原生OpenAI支持并透传自定义headers
 ## [0.1.14] - 2026-03-09
 
 - 248bc0d ci: 固定Bun版本为1.2.22并清理依赖项
