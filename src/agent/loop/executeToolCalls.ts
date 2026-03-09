@@ -1,0 +1,123 @@
+import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { ExecutionPipeline } from '../../tools/execution/ExecutionPipeline.js';
+import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
+import type { ToolResult } from '../../tools/types/index.js';
+import { ToolErrorType } from '../../tools/types/index.js';
+import type { PermissionMode } from '../../types/common.js';
+import type { ToolExecutionPlan } from './planToolExecution.js';
+import type { FunctionToolCall } from './types.js';
+
+const logger = createLogger(LogCategory.AGENT);
+
+interface ToolExecutionContext {
+  sessionId: string;
+  userId: string;
+  workspaceRoot: string;
+  confirmationHandler?: ConfirmationHandler;
+}
+
+interface ToolExecutionHooks {
+  onBeforeToolExec?: (ctx: {
+    toolCall: FunctionToolCall;
+    params: Record<string, unknown>;
+  }) => Promise<string | null>;
+}
+
+interface ExecuteToolCallsInput {
+  plan: ToolExecutionPlan;
+  executionPipeline: ExecutionPipeline;
+  executionContext: ToolExecutionContext;
+  permissionMode?: PermissionMode;
+  signal?: AbortSignal;
+  hooks?: ToolExecutionHooks;
+}
+
+export interface ToolExecutionOutcome {
+  toolCall: FunctionToolCall;
+  result: ToolResult;
+  toolUseUuid: string | null;
+}
+
+export async function executeToolCalls(
+  input: ExecuteToolCallsInput,
+): Promise<ToolExecutionOutcome[]> {
+  const { plan } = input;
+  if (plan.mode === 'serial') {
+    const results: ToolExecutionOutcome[] = [];
+    for (const toolCall of plan.calls) {
+      results.push(await executeToolCall(toolCall, input));
+    }
+    return results;
+  }
+
+  return Promise.all(plan.calls.map((toolCall) => executeToolCall(toolCall, input)));
+}
+
+async function executeToolCall(
+  toolCall: FunctionToolCall,
+  input: ExecuteToolCallsInput,
+): Promise<ToolExecutionOutcome> {
+  try {
+    const params = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+    await repairToolCallParams(toolCall, params);
+
+    const toolUseUuid = await input.hooks?.onBeforeToolExec?.({
+      toolCall,
+      params,
+    }) ?? null;
+
+    const result = await input.executionPipeline.execute(
+      toolCall.function.name,
+      params,
+      {
+        sessionId: input.executionContext.sessionId,
+        userId: input.executionContext.userId,
+        workspaceRoot: input.executionContext.workspaceRoot,
+        signal: input.signal,
+        confirmationHandler: input.executionContext.confirmationHandler,
+        permissionMode: input.permissionMode,
+      },
+    );
+
+    return { toolCall, result, toolUseUuid };
+  } catch (error) {
+    logger.error(`Tool execution failed for ${toolCall.function.name}:`, error);
+    return {
+      toolCall,
+      result: {
+        success: false,
+        llmContent: '',
+        displayContent: '',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: error instanceof Error ? error.message : 'Unknown error',
+        },
+      },
+      toolUseUuid: null,
+    };
+  }
+}
+
+async function repairToolCallParams(
+  toolCall: FunctionToolCall,
+  params: Record<string, unknown>,
+): Promise<void> {
+  if (
+    toolCall.function.name === 'Task'
+    && (typeof params.subagent_session_id !== 'string' || params.subagent_session_id.length === 0)
+  ) {
+    const { nanoid } = await import('nanoid');
+    params.subagent_session_id =
+      typeof params.resume === 'string' && params.resume.length > 0
+        ? params.resume
+        : nanoid();
+  }
+
+  if (typeof params.todos === 'string') {
+    try {
+      params.todos = JSON.parse(params.todos) as unknown;
+    } catch {
+      // Let the validation layer handle malformed todos payloads.
+    }
+  }
+}

@@ -47,6 +47,10 @@ function toJsonValue(value: string | object): JsonValue {
 
 const logger = createLogger(LogCategory.AGENT);
 
+function syncContextMessages(context: ChatContext, messages: Message[]): void {
+  context.messages = messages.filter((message) => message.role !== 'system');
+}
+
 /**
  * Skill 执行上下文
  */
@@ -210,7 +214,7 @@ export class LoopRunner {
         throw new Error('AgentLoop ended without result');
       }
 
-      context.messages = messages.filter((m) => m.role !== 'system');
+      syncContextMessages(context, messages);
       return result;
     } catch (error) {
       if (error instanceof Error &&
