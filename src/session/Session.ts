@@ -179,6 +179,8 @@ class Session implements ISession {
   }
 
   async *stream(options?: StreamOptions): AsyncGenerator<StreamMessage> {
+    await this.ensureInitialized();
+
     if (this.pendingMessage === null) {
       throw new Error('No pending message. Call send() before stream().');
     }
@@ -212,7 +214,7 @@ class Session implements ISession {
       permissionMode: this.permissionMode,
     };
 
-    const stream = this.agent!.streamChat(message, context, {
+    const stream = this.getAgent().streamChat(message, context, {
       maxTurns: sendOptions?.maxTurns ?? this.maxTurns,
       signal,
     });
@@ -355,7 +357,7 @@ class Session implements ISession {
 
   async setModel(model: string): Promise<void> {
     await this.ensureInitialized();
-    await this.agent!.setModel(model);
+    await this.getAgent().setModel(model);
     this.options.model = model;
   }
 
@@ -375,30 +377,30 @@ class Session implements ISession {
 
   async mcpServerStatus(): Promise<McpServerStatus[]> {
     await this.ensureInitialized();
-    return this.runtime!.mcpServerStatus();
+    return this.getRuntime().mcpServerStatus();
   }
 
   async mcpConnect(serverName: string): Promise<void> {
     await this.ensureInitialized();
-    await this.runtime!.mcpConnect(serverName);
+    await this.getRuntime().mcpConnect(serverName);
     this.logger.debug(`[Session] Connected to MCP server: ${serverName}`);
   }
 
   async mcpDisconnect(serverName: string): Promise<void> {
     await this.ensureInitialized();
-    await this.runtime!.mcpDisconnect(serverName);
+    await this.getRuntime().mcpDisconnect(serverName);
     this.logger.debug(`[Session] Disconnected from MCP server: ${serverName}`);
   }
 
   async mcpReconnect(serverName: string): Promise<void> {
     await this.ensureInitialized();
-    await this.runtime!.mcpReconnect(serverName);
+    await this.getRuntime().mcpReconnect(serverName);
     this.logger.debug(`[Session] Reconnected to MCP server: ${serverName}`);
   }
 
   async mcpListTools(): Promise<McpToolInfo[]> {
     await this.ensureInitialized();
-    return this.runtime!.mcpListTools();
+    return this.getRuntime().mcpListTools();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -409,6 +411,20 @@ class Session implements ISession {
     if (!this.initialized) {
       await this.initialize();
     }
+  }
+
+  private getAgent(): Agent {
+    if (!this.agent) {
+      throw new Error('Session agent is not initialized');
+    }
+    return this.agent;
+  }
+
+  private getRuntime(): SessionRuntime {
+    if (!this.runtime) {
+      throw new Error('Session runtime is not initialized');
+    }
+    return this.runtime;
   }
 
   private combineSignals(signal1: AbortSignal, signal2: AbortSignal): AbortSignal {
