@@ -16,8 +16,6 @@ import { enterPlanModeTool, exitPlanModeTool } from './plan/index.js';
 import { globTool, grepTool } from './search/index.js';
 // Shell 命令工具
 import { bashTool, killShellTool } from './shell/index.js';
-// Spec 工具
-import { specTools } from './spec/index.js';
 // System 工具
 import { askUserQuestionTool, skillTool } from './system/index.js';
 // 任务管理工具
@@ -66,7 +64,6 @@ export async function getBuiltinTools(opts?: {
     createTodoWriteTool({ sessionId, configDir }),
     enterPlanModeTool,
     exitPlanModeTool,
-    ...specTools,
     askUserQuestionTool,
     skillTool,
     ...(opts?.mcpRegistry ? [createListMcpResourcesTool(opts.mcpRegistry), createReadMcpResourceTool(opts.mcpRegistry)] : []),

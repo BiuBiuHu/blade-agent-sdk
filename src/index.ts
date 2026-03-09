@@ -88,8 +88,6 @@ export type {
 } from './session/index.js';
 export { discoverSkills, injectSkillsMetadata } from './skills/index.js';
 export * from './skills/types.js';
-export { SpecManager } from './spec/SpecManager.js';
-export * from './spec/types.js';
 export { getBuiltinTools } from './tools/builtin/index.js';
 export { createListMcpResourcesTool, createReadMcpResourceTool } from './tools/builtin/mcp/index.js';
 export { notebookEditTool } from './tools/builtin/notebook/index.js';
@@ -120,4 +118,3 @@ export type {
     PermissionRuleValue,
     PermissionUpdate
 } from './types/permissions.js';
-
