@@ -5,7 +5,7 @@
  */
 
 import { ContextManager } from '../context/ContextManager.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import {
   createChatServiceAsync,
   type IChatService,
@@ -17,21 +17,22 @@ import type {
 } from '../types/common.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
 
-const logger = createLogger(LogCategory.AGENT);
-
 export class ModelManager {
   private chatService!: IChatService;
   private currentModelId?: string;
   private currentModelMaxContextTokens!: number;
   private readonly contextManager: ContextManager;
+  private readonly logger: InternalLogger;
 
   constructor(
     private config: BladeConfig,
     private outputFormat?: OutputFormat,
     contextManager?: ContextManager,
     projectPath?: string,
+    logger?: InternalLogger,
   ) {
     this.contextManager = contextManager || new ContextManager({ projectPath });
+    this.logger = (logger ?? NOOP_LOGGER).child(LogCategory.AGENT);
   }
 
   // ===== Getters =====
@@ -70,15 +71,15 @@ export class ModelManager {
   // ===== 模型应用 =====
 
   async applyModelConfig(modelConfig: ModelConfig, label: string): Promise<void> {
-    logger.debug(`[ModelManager] ${label} ${modelConfig.name} (${modelConfig.model})`);
+    this.logger.debug(`[ModelManager] ${label} ${modelConfig.name} (${modelConfig.model})`);
 
     const modelSupportsThinking = isThinkingModel(modelConfig);
     const thinkingModeEnabled = modelConfig.thinkingEnabled ?? false;
     const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
     if (modelSupportsThinking && !thinkingModeEnabled) {
-      logger.debug(`[ModelManager] 🧠 模型支持 Thinking，但用户未开启（按 Tab 开启）`);
+      this.logger.debug(`[ModelManager] 🧠 模型支持 Thinking，但用户未开启（按 Tab 开启）`);
     } else if (supportsThinking) {
-      logger.debug(`[ModelManager] 🧠 Thinking 模式已启用，启用 reasoning_content 支持`);
+      this.logger.debug(`[ModelManager] 🧠 Thinking 模式已启用，启用 reasoning_content 支持`);
     }
 
     const maxContextTokens = modelConfig.maxContextTokens ?? 128000;
@@ -106,7 +107,7 @@ export class ModelManager {
     const models = this.config.models || [];
     const modelConfig = models.find(m => m.id === modelId);
     if (!modelConfig) {
-      logger.warn(`[ModelManager] ⚠️ 模型配置未找到: ${modelId}`);
+      this.logger.warn(`[ModelManager] ⚠️ 模型配置未找到: ${modelId}`);
       return;
     }
     await this.applyModelConfig(modelConfig, '🔁 切换模型');

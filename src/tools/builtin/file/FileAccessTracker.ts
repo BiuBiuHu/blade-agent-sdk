@@ -1,9 +1,6 @@
 import { promises as fs } from 'node:fs';
-import { createLogger, LogCategory } from '../../../logging/Logger.js';
-import { isNodeError, getErrorCode, getErrorMessage, getErrorName } from '../../../utils/errorUtils.js';
-
-// 创建 FileAccessTracker 专用 Logger
-const logger = createLogger(LogCategory.TOOL);
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../../logging/Logger.js';
+import { getErrorCode, getErrorMessage } from '../../../utils/errorUtils.js';
 
 /**
  * 文件访问记录
@@ -26,6 +23,7 @@ export interface FileAccessRecord {
 export class FileAccessTracker {
   // 全局单例实例
   private static instance: FileAccessTracker | null = null;
+  private logger: InternalLogger = NOOP_LOGGER.child(LogCategory.TOOL);
 
   // 已读文件映射: filePath -> FileAccessRecord
   private accessedFiles: Map<string, FileAccessRecord> = new Map();
@@ -36,11 +34,18 @@ export class FileAccessTracker {
   /**
    * 获取全局单例实例
    */
-  static getInstance(): FileAccessTracker {
+  static getInstance(logger?: InternalLogger): FileAccessTracker {
     if (!FileAccessTracker.instance) {
       FileAccessTracker.instance = new FileAccessTracker();
     }
+    if (logger) {
+      FileAccessTracker.instance.setLogger(logger);
+    }
     return FileAccessTracker.instance;
+  }
+
+  setLogger(logger: InternalLogger): void {
+    this.logger = logger.child(LogCategory.TOOL);
   }
 
   /**
@@ -64,9 +69,9 @@ export class FileAccessTracker {
 
       this.accessedFiles.set(filePath, record);
 
-      logger.debug(`记录文件读取: ${filePath}`);
+      this.logger.debug(`记录文件读取: ${filePath}`);
     } catch (error) {
-      logger.warn(`记录文件读取失败: ${filePath}`, error);
+      this.logger.warn(`记录文件读取失败: ${filePath}`, error);
     }
   }
 
@@ -97,9 +102,9 @@ export class FileAccessTracker {
 
       this.accessedFiles.set(filePath, record);
 
-      logger.debug(`记录文件${operation === 'edit' ? '编辑' : '写入'}: ${filePath}`);
+      this.logger.debug(`记录文件${operation === 'edit' ? '编辑' : '写入'}: ${filePath}`);
     } catch (error) {
-      logger.warn(
+      this.logger.warn(
         `记录文件${operation === 'edit' ? '编辑' : '写入'}失败: ${filePath}`,
         error
       );
@@ -219,7 +224,7 @@ export class FileAccessTracker {
         };
       }
 
-      logger.warn(`检查文件外部修改失败: ${filePath}`, error);
+      this.logger.warn(`检查文件外部修改失败: ${filePath}`, error);
       return {
         isExternal: false,
         message: `无法检查文件状态: ${getErrorMessage(error)}`,

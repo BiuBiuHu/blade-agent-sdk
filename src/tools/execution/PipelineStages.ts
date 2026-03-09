@@ -1,4 +1,4 @@
-import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
 import type { PermissionsConfig } from '../../types/common.js';
 import { PermissionMode } from '../../types/common.js';
 import type {
@@ -89,8 +89,6 @@ import {
   SensitivityLevel,
 } from '../validation/SensitiveFileDetector.js';
 
-const logger = createLogger(LogCategory.EXECUTION);
-
 /**
  * 工具发现阶段
  * 负责从注册表中查找工具
@@ -130,7 +128,8 @@ export class PermissionStage implements PipelineStage {
   constructor(
     permissionConfig: PermissionsConfig,
     sessionApprovals: Set<string>,
-    permissionMode: PermissionMode
+    permissionMode: PermissionMode,
+    private readonly logger: InternalLogger = NOOP_LOGGER.child(LogCategory.EXECUTION),
   ) {
     this.permissionChecker = new PermissionChecker(permissionConfig);
     this.sessionApprovals = sessionApprovals;
@@ -380,7 +379,8 @@ export class ConfirmationStage implements PipelineStage {
   constructor(
     private readonly sessionApprovals: Set<string>,
     private readonly permissionChecker: PermissionChecker,
-    private readonly canUseTool?: CanUseTool
+    private readonly canUseTool?: CanUseTool,
+    private readonly logger: InternalLogger = NOOP_LOGGER.child(LogCategory.EXECUTION),
   ) {}
 
   async process(execution: ToolExecution): Promise<void> {
@@ -428,7 +428,7 @@ export class ConfirmationStage implements PipelineStage {
         if (result.updatedPermissions) {
           this.applyPermissionUpdates(result.updatedPermissions);
         }
-        logger.debug(`canUseTool allowed: ${execution.toolName}`);
+        this.logger.debug(`canUseTool allowed: ${execution.toolName}`);
         break;
 
       case 'deny':
@@ -460,7 +460,7 @@ export class ConfirmationStage implements PipelineStage {
             if (update.behavior === 'allow') {
               this.sessionApprovals.add(ruleStr);
             }
-            logger.debug(`Permission rule added: ${ruleStr} -> ${update.behavior}`);
+            this.logger.debug(`Permission rule added: ${ruleStr} -> ${update.behavior}`);
           }
           break;
 
@@ -470,7 +470,7 @@ export class ConfirmationStage implements PipelineStage {
               ? `${rule.toolName}:${rule.ruleContent}`
               : rule.toolName;
             this.sessionApprovals.delete(ruleStr);
-            logger.debug(`Permission rule removed: ${ruleStr}`);
+            this.logger.debug(`Permission rule removed: ${ruleStr}`);
           }
           break;
       }
@@ -499,13 +499,13 @@ export class ConfirmationStage implements PipelineStage {
         affectedFiles: affectedPaths,
       };
 
-      logger.warn(`工具 "${tool.name}" 需要用户确认: ${confirmationDetails.title}`);
+      this.logger.warn(`工具 "${tool.name}" 需要用户确认: ${confirmationDetails.title}`);
 
       const confirmationHandler = execution.context.confirmationHandler;
       if (confirmationHandler) {
-        logger.info(`[ConfirmationStage] Requesting confirmation for ${tool.name}`);
+        this.logger.info(`[ConfirmationStage] Requesting confirmation for ${tool.name}`);
         const response = await confirmationHandler.requestConfirmation(confirmationDetails);
-        logger.info(`[ConfirmationStage] Confirmation response: approved=${response.approved}`);
+        this.logger.info(`[ConfirmationStage] Confirmation response: approved=${response.approved}`);
 
         if (!response.approved) {
           execution.abort(
@@ -520,7 +520,7 @@ export class ConfirmationStage implements PipelineStage {
           this.sessionApprovals.add(execution._internal.permissionSignature);
         }
       } else {
-        logger.warn('⚠️ No ConfirmationHandler; auto-approving tool execution');
+        this.logger.warn('⚠️ No ConfirmationHandler; auto-approving tool execution');
       }
     } catch (error) {
       execution.abort(`User confirmation failed: ${getErrorMessage(error)}`);

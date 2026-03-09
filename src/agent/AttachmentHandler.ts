@@ -1,21 +1,21 @@
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
 import type { ContentPart } from '../services/ChatServiceInterface.js';
 import type { UserMessageContent } from './types.js';
 
-const logger = createLogger(LogCategory.AGENT);
-
 export class AttachmentHandler {
   private attachmentCollector: AttachmentCollector;
+  private readonly logger: InternalLogger;
 
-  constructor(cwd: string) {
+  constructor(cwd: string, logger?: InternalLogger) {
+    this.logger = (logger ?? NOOP_LOGGER).child(LogCategory.AGENT);
     this.attachmentCollector = new AttachmentCollector({
       cwd,
       maxFileSize: 1024 * 1024,
       maxLines: 2000,
       maxTokens: 32000,
-    });
+    }, this.logger.child(LogCategory.PROMPTS));
   }
 
   async processAtMentionsForContent(
@@ -46,7 +46,7 @@ export class AttachmentHandler {
         return content;
       }
 
-      logger.debug(
+      this.logger.debug(
         `✅ Processed ${attachments.length} @ file mentions in multimodal message`
       );
 
@@ -63,7 +63,7 @@ export class AttachmentHandler {
 
       return result;
     } catch (error) {
-      logger.error('Failed to process @ mentions in multimodal message:', error);
+      this.logger.error('Failed to process @ mentions in multimodal message:', error);
       return content;
     }
   }
@@ -119,11 +119,11 @@ export class AttachmentHandler {
         return message;
       }
 
-      logger.debug(`✅ Processed ${attachments.length} @ file mentions`);
+      this.logger.debug(`✅ Processed ${attachments.length} @ file mentions`);
 
       return this.appendAttachments(message, attachments);
     } catch (error) {
-      logger.error('Failed to process @ mentions:', error);
+      this.logger.error('Failed to process @ mentions:', error);
       return message;
     }
   }

@@ -2,12 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'yaml';
-import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
 import { builtinAgents } from './builtinAgents.js';
 import type { SubagentConfig, SubagentFrontmatter } from './types.js';
 import { mapClaudeCodePermissionMode } from './types.js';
-
-const logger = createLogger(LogCategory.AGENT);
 
 /**
  * 配置来源类型（不包含动态的 plugin:xxx 格式）
@@ -32,6 +30,15 @@ type FileConfigSource = Exclude<ConfigSource, 'plugin'>;
  */
 export class SubagentRegistry {
   private subagents = new Map<string, SubagentConfig>();
+  private logger: InternalLogger;
+
+  constructor(logger: InternalLogger = NOOP_LOGGER) {
+    this.logger = logger.child(LogCategory.AGENT);
+  }
+
+  setLogger(logger: InternalLogger): void {
+    this.logger = logger.child(LogCategory.AGENT);
+  }
 
   /**
    * 注册一个 subagent
@@ -107,7 +114,7 @@ export class SubagentRegistry {
         // 使用 set 允许覆盖（用户/项目配置覆盖内置）
         this.subagents.set(config.name, config);
       } catch (error) {
-        logger.warn(`Failed to load subagent config from ${filePath}:`, error);
+        this.logger.warn(`Failed to load subagent config from ${filePath}:`, error);
       }
     }
   }
@@ -224,7 +231,7 @@ export class SubagentRegistry {
     this.loadFromDirectory(bladeProjectAgentsDir, 'blade-project');
 
     const count = this.getAllNames().length;
-    logger.debug(`📦 Loaded ${count} subagents from standard locations`);
+    this.logger.debug(`📦 Loaded ${count} subagents from standard locations`);
 
     return count;
   }
@@ -241,7 +248,7 @@ export class SubagentRegistry {
         source: 'builtin',
       });
     }
-    logger.debug(`Loaded ${builtinAgents.length} builtin subagents`);
+    this.logger.debug(`Loaded ${builtinAgents.length} builtin subagents`);
   }
 
   /**

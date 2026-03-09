@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PersistentStore } from '../../context/storage/PersistentStore.js';
-import { forkSession, resumeSession } from '../Session.js';
+import { createSession, forkSession, resumeSession } from '../Session.js';
 
 function createWorkspaceRoot(): string {
   return mkdtempSync(join(tmpdir(), 'session-persistence-test-'));
@@ -79,5 +79,54 @@ describe('Session persistence', () => {
     ]);
 
     forkedSession.close();
+  });
+
+  it('should forward internal logs through the injected logger interface', async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const log = mock(() => {});
+
+    const session = await createSession({
+      ...createOptions(workspaceRoot),
+      logger: { log },
+    });
+
+    expect(log).toHaveBeenCalled();
+    const calls = log.mock.calls as unknown[][];
+    const firstCall = calls[0];
+    expect(firstCall).toBeDefined();
+    const entry = firstCall[0] as {
+      category: string;
+      sessionId?: string;
+    };
+    expect(entry.category).toBe('Agent');
+    expect(entry.sessionId).toBe(session.sessionId);
+
+    session.close();
+  });
+
+  it('should isolate logger routing between concurrent sessions', async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const logA = mock(() => {});
+    const logB = mock(() => {});
+
+    const sessionA = await createSession({
+      ...createOptions(workspaceRoot),
+      logger: { log: logA },
+    });
+    const sessionB = await createSession({
+      ...createOptions(workspaceRoot),
+      logger: { log: logB },
+    });
+
+    logA.mockClear();
+    logB.mockClear();
+
+    await sessionA.setModel('gpt-4.1');
+
+    expect(logA).toHaveBeenCalled();
+    expect(logB).not.toHaveBeenCalled();
+
+    sessionA.close();
+    sessionB.close();
   });
 });

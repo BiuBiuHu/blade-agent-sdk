@@ -10,10 +10,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
-
-const logger = createLogger(LogCategory.AGENT);
 
 /**
  * Agent 会话状态
@@ -76,6 +74,7 @@ export interface AgentSession {
  */
 export class AgentSessionStore {
   private static instance: AgentSessionStore | null = null;
+  private logger: InternalLogger = NOOP_LOGGER.child(LogCategory.AGENT);
   private sessionsDir: string;
 
   // 内存缓存（避免频繁读取文件）
@@ -86,11 +85,18 @@ export class AgentSessionStore {
     this.ensureDirectory();
   }
 
-  static getInstance(): AgentSessionStore {
+  static getInstance(logger?: InternalLogger): AgentSessionStore {
     if (!AgentSessionStore.instance) {
       AgentSessionStore.instance = new AgentSessionStore();
     }
+    if (logger) {
+      AgentSessionStore.instance.setLogger(logger);
+    }
     return AgentSessionStore.instance;
+  }
+
+  setLogger(logger: InternalLogger): void {
+    this.logger = logger.child(LogCategory.AGENT);
   }
 
   /**
@@ -123,9 +129,9 @@ export class AgentSessionStore {
       // 更新缓存
       this.cache.set(session.id, session);
 
-      logger.debug(`Session saved: ${session.id}`);
+      this.logger.debug(`Session saved: ${session.id}`);
     } catch (error) {
-      logger.warn(`Failed to save session ${session.id}:`, error);
+      this.logger.warn(`Failed to save session ${session.id}:`, error);
     }
   }
 
@@ -152,7 +158,7 @@ export class AgentSessionStore {
 
       return session;
     } catch (error) {
-      logger.warn(`Failed to load session ${agentId}:`, error);
+      this.logger.warn(`Failed to load session ${agentId}:`, error);
       return undefined;
     }
   }
@@ -221,7 +227,7 @@ export class AgentSessionStore {
       this.cache.delete(agentId);
       return true;
     } catch (error) {
-      logger.warn(`Failed to delete session ${agentId}:`, error);
+      this.logger.warn(`Failed to delete session ${agentId}:`, error);
       return false;
     }
   }
@@ -247,7 +253,7 @@ export class AgentSessionStore {
       // 按最后活跃时间倒序
       return sessions.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
     } catch (error) {
-      logger.warn('Failed to list sessions:', error);
+      this.logger.warn('Failed to list sessions:', error);
       return [];
     }
   }
@@ -281,7 +287,7 @@ export class AgentSessionStore {
     }
 
     if (cleaned > 0) {
-      logger.info(`Cleaned up ${cleaned} expired agent sessions`);
+      this.logger.info(`Cleaned up ${cleaned} expired agent sessions`);
     }
 
     return cleaned;

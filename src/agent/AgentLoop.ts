@@ -7,6 +7,7 @@
  * 4. 与现有 AgentEvent / LoopResult 类型兼容
  */
 
+import type { InternalLogger } from '../logging/Logger.js';
 import type { ChatResponse, IChatService, Message, ToolCall } from '../services/ChatServiceInterface.js';
 import type { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
@@ -41,6 +42,9 @@ export interface AgentLoopConfig {
 
   /** 工具执行管道 */
   executionPipeline: ExecutionPipeline;
+
+  /** 内部日志器 */
+  logger?: InternalLogger;
 
   /** 可用工具定义（已经过权限过滤和 Skill 限制，LLM 格式） */
   tools: LlmToolDef[];
@@ -345,6 +349,7 @@ export async function* agentLoop(
       plan: executionPlan,
       executionPipeline,
       executionContext,
+      logger: config.logger,
       permissionMode: config.permissionMode,
       signal,
       hooks: {

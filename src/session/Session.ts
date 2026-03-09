@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import { Agent } from '../agent/Agent.js';
 import type { ChatContext, LoopResult } from '../agent/types.js';
 import { getCheckpointService, type RewindResult } from '../checkpoint/index.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { createRootLogger, type InternalLogger, LogCategory } from '../logging/Logger.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import {
   type BladeConfig,
@@ -31,8 +31,6 @@ import type {
   ToolCallRecord,
 } from './types.js';
 
-const logger = createLogger(LogCategory.AGENT);
-
 export interface ResumeOptions extends SessionOptions {
   sessionId: string;
 }
@@ -47,6 +45,8 @@ class Session implements ISession {
   private readonly store: SessionStore;
   private readonly isResumeSession: boolean;
   private readonly workspaceRoot: string;
+  private readonly rootLogger: InternalLogger;
+  private readonly logger: InternalLogger;
   private maxTurns: number;
   private permissionMode: PermissionMode;
   private initialized = false;
@@ -62,6 +62,8 @@ class Session implements ISession {
     this.workspaceRoot = options.cwd || process.cwd();
     this.store = new JsonlSessionStore(this.workspaceRoot);
     this.isResumeSession = isResume;
+    this.rootLogger = createRootLogger(options.logger, this.sessionId);
+    this.logger = this.rootLogger.child(LogCategory.AGENT);
   }
 
   get messages(): Message[] {
@@ -78,6 +80,7 @@ class Session implements ISession {
       config,
       this.permissionMode,
       this.workspaceRoot,
+      this.rootLogger,
     );
     await this.runtime.initialize();
     if (!this.isResumeSession) {
@@ -99,7 +102,7 @@ class Session implements ISession {
       resumeSessionId: this.isResumeSession ? this.sessionId : undefined,
     });
 
-    logger.debug(`[Session] Initialized session ${this.sessionId}`);
+    this.logger.debug(`[Session] Initialized session ${this.sessionId}`);
   }
 
   async loadHistory(): Promise<void> {
@@ -107,12 +110,12 @@ class Session implements ISession {
       const state = await this.store.loadState(this.sessionId);
       this._messages = state?.messages ?? [];
       if (this._messages.length === 0) {
-        logger.debug(`[Session] No history found for session ${this.sessionId}`);
+        this.logger.debug(`[Session] No history found for session ${this.sessionId}`);
         return;
       }
-      logger.debug(`[Session] Loaded ${this._messages.length} messages from history`);
+      this.logger.debug(`[Session] Loaded ${this._messages.length} messages from history`);
     } catch (error) {
-      logger.warn(`[Session] Failed to load history for session ${this.sessionId}:`, error);
+      this.logger.warn(`[Session] Failed to load history for session ${this.sessionId}:`, error);
     }
   }
 
@@ -336,7 +339,7 @@ class Session implements ISession {
     void this.runHookCallbacks(HookEvent.SessionEnd, { reason: 'other' });
     void this.runtime?.close();
     this.runtime = null;
-    logger.debug(`[Session] Closed session ${this.sessionId}`);
+    this.logger.debug(`[Session] Closed session ${this.sessionId}`);
   }
 
   abort(): void {
@@ -378,19 +381,19 @@ class Session implements ISession {
   async mcpConnect(serverName: string): Promise<void> {
     await this.ensureInitialized();
     await this.runtime!.mcpConnect(serverName);
-    logger.debug(`[Session] Connected to MCP server: ${serverName}`);
+    this.logger.debug(`[Session] Connected to MCP server: ${serverName}`);
   }
 
   async mcpDisconnect(serverName: string): Promise<void> {
     await this.ensureInitialized();
     await this.runtime!.mcpDisconnect(serverName);
-    logger.debug(`[Session] Disconnected from MCP server: ${serverName}`);
+    this.logger.debug(`[Session] Disconnected from MCP server: ${serverName}`);
   }
 
   async mcpReconnect(serverName: string): Promise<void> {
     await this.ensureInitialized();
     await this.runtime!.mcpReconnect(serverName);
-    logger.debug(`[Session] Reconnected to MCP server: ${serverName}`);
+    this.logger.debug(`[Session] Reconnected to MCP server: ${serverName}`);
   }
 
   async mcpListTools(): Promise<McpToolInfo[]> {
@@ -441,7 +444,7 @@ class Session implements ISession {
       };
     }
 
-    const checkpointService = getCheckpointService();
+    const checkpointService = getCheckpointService(this.rootLogger);
     return checkpointService.rewindFiles(userMessageUuid);
   }
 
@@ -449,7 +452,7 @@ class Session implements ISession {
     if (!this.options.enableFileCheckpointing) {
       return null;
     }
-    return getCheckpointService().getStatistics();
+    return getCheckpointService(this.rootLogger).getStatistics();
   }
 
   async fork(options?: ForkSessionOptions): Promise<ISession> {
@@ -463,10 +466,10 @@ class Session implements ISession {
     forkedSession._messages = this.cloneSnapshotMessages(snapshot);
 
     if (options?.copyCheckpoints && this.options.enableFileCheckpointing) {
-      logger.debug('[Session] Checkpoint copying is not yet implemented for forked sessions');
+      this.logger.debug('[Session] Checkpoint copying is not yet implemented for forked sessions');
     }
 
-    logger.debug(
+    this.logger.debug(
       `[Session] Forked session ${this.sessionId} -> ${forkedSession.sessionId} with ${forkedSession._messages.length} messages`,
     );
 
@@ -547,7 +550,6 @@ class Session implements ISession {
 export async function createSession(options: SessionOptions): Promise<ISession> {
   const session = new Session(options);
   await session.initialize();
-  logger.debug(`[Session] Created new session: ${session.sessionId}`);
   return session;
 }
 
@@ -556,7 +558,6 @@ export async function resumeSession(options: ResumeOptions): Promise<ISession> {
   const session = new Session(sessionOptions, sessionId, true);
   await session.initialize();
   await session.loadHistory();
-  logger.debug(`[Session] Resumed session: ${sessionId} with ${session.messages.length} messages`);
   return session;
 }
 
@@ -575,10 +576,6 @@ export async function forkSession(options: ForkOptions): Promise<ISession> {
   const forkedSession = await sourceSession.fork({ messageId, copyCheckpoints });
 
   sourceSession.close();
-
-  logger.debug(
-    `[Session] Forked session ${sessionId} -> ${forkedSession.sessionId} with ${forkedSession.messages.length} messages`,
-  );
 
   return forkedSession;
 }

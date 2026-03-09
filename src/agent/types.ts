@@ -73,6 +73,7 @@ export interface AgentOptions {
 
   // 沙箱配置
   sandbox?: SandboxSettings; // 命令执行沙箱设置
+
 }
 
 // ===== Agentic Loop Types =====

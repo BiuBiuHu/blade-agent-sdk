@@ -1,11 +1,9 @@
-import { execSync, spawn, type SpawnOptions } from 'child_process';
-import { existsSync, mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'fs';
+import { execSync } from 'child_process';
+import { existsSync, mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import type { SandboxSettings, NetworkSandboxSettings } from '../types/common.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
-
-const logger = createLogger(LogCategory.TOOL);
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
+import type { NetworkSandboxSettings, SandboxSettings } from '../types/common.js';
 
 export interface SandboxExecutionOptions {
   workDir: string;
@@ -30,20 +28,28 @@ export interface SandboxCapabilities {
 
 export class SandboxExecutor {
   private static instance: SandboxExecutor | null = null;
+  private logger: InternalLogger = NOOP_LOGGER.child(LogCategory.TOOL);
   private capabilities: SandboxCapabilities | null = null;
   private settings: SandboxSettings = {};
 
   private constructor() {}
 
-  static getInstance(): SandboxExecutor {
+  static getInstance(logger?: InternalLogger): SandboxExecutor {
     if (!SandboxExecutor.instance) {
       SandboxExecutor.instance = new SandboxExecutor();
+    }
+    if (logger) {
+      SandboxExecutor.instance.setLogger(logger);
     }
     return SandboxExecutor.instance;
   }
 
   static resetInstance(): void {
     SandboxExecutor.instance = null;
+  }
+
+  setLogger(logger: InternalLogger): void {
+    this.logger = logger.child(LogCategory.TOOL);
   }
 
   configure(settings: SandboxSettings): void {
@@ -82,7 +88,7 @@ export class SandboxExecutor {
   private detectLinuxCapabilities(): SandboxCapabilities {
     try {
       const version = execSync('bwrap --version 2>/dev/null', { encoding: 'utf-8' }).trim();
-      logger.debug(`[SandboxExecutor] Detected bubblewrap: ${version}`);
+      this.logger.debug(`[SandboxExecutor] Detected bubblewrap: ${version}`);
 
       return {
         available: true,
@@ -95,7 +101,7 @@ export class SandboxExecutor {
         },
       };
     } catch {
-      logger.debug('[SandboxExecutor] bubblewrap not available on Linux');
+      this.logger.debug('[SandboxExecutor] bubblewrap not available on Linux');
       return {
         available: false,
         type: 'none',
@@ -112,7 +118,7 @@ export class SandboxExecutor {
     try {
       const sandboxExecPath = '/usr/bin/sandbox-exec';
       if (existsSync(sandboxExecPath)) {
-        logger.debug('[SandboxExecutor] Detected macOS sandbox-exec (Seatbelt)');
+        this.logger.debug('[SandboxExecutor] Detected macOS sandbox-exec (Seatbelt)');
 
         return {
           available: true,
@@ -126,7 +132,7 @@ export class SandboxExecutor {
         };
       }
     } catch {
-      logger.debug('[SandboxExecutor] sandbox-exec not available on macOS');
+      this.logger.debug('[SandboxExecutor] sandbox-exec not available on macOS');
     }
 
     return {
@@ -352,6 +358,6 @@ export class SandboxExecutor {
   }
 }
 
-export function getSandboxExecutor(): SandboxExecutor {
-  return SandboxExecutor.getInstance();
+export function getSandboxExecutor(logger?: InternalLogger): SandboxExecutor {
+  return SandboxExecutor.getInstance(logger);
 }

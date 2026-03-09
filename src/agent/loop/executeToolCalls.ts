@@ -1,4 +1,4 @@
-import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
 import type { ExecutionPipeline } from '../../tools/execution/ExecutionPipeline.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
@@ -6,8 +6,6 @@ import { ToolErrorType } from '../../tools/types/index.js';
 import type { PermissionMode } from '../../types/common.js';
 import type { ToolExecutionPlan } from './planToolExecution.js';
 import type { FunctionToolCall } from './types.js';
-
-const logger = createLogger(LogCategory.AGENT);
 
 interface ToolExecutionContext {
   sessionId: string;
@@ -27,6 +25,7 @@ interface ExecuteToolCallsInput {
   plan: ToolExecutionPlan;
   executionPipeline: ExecutionPipeline;
   executionContext: ToolExecutionContext;
+  logger?: InternalLogger;
   permissionMode?: PermissionMode;
   signal?: AbortSignal;
   hooks?: ToolExecutionHooks;
@@ -57,6 +56,7 @@ async function executeToolCall(
   toolCall: FunctionToolCall,
   input: ExecuteToolCallsInput,
 ): Promise<ToolExecutionOutcome> {
+  const logger = input.logger ?? NOOP_LOGGER.child(LogCategory.AGENT);
   try {
     const params = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
     await repairToolCallParams(toolCall, params);

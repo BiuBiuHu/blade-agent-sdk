@@ -12,7 +12,6 @@ export type {
 export { CompactionService } from './context/CompactionService.js';
 export { ContextManager } from './context/ContextManager.js';
 export { HookManager } from './hooks/HookManager.js';
-export * from './logging/Logger.js';
 export {
     HealthMonitor,
     HealthStatus,
@@ -67,6 +66,7 @@ export { ExecutionPipeline } from './tools/execution/ExecutionPipeline.js';
 export { ToolRegistry } from './tools/registry/ToolRegistry.js';
 export * from './tools/types/index.js';
 export * from './types/common.js';
+export type { AgentLogger, LogEntry, LogLevelName } from './types/logging.js';
 export { detectThinkingSupport, getThinkingConfig, isThinkingModel } from './utils/modelDetection.js';
 export {
     DecisionBehavior,

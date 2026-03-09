@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { HookManager } from '../../hooks/HookManager.js';
 import { HookStage } from '../../hooks/HookStage.js';
 import { PostToolUseHookStage } from '../../hooks/PostToolUseHookStage.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
 import { PermissionMode, type PermissionsConfig } from '../../types/common.js';
 import type { CanUseTool } from '../../types/permissions.js';
 import { getErrorMessage, getErrorName } from '../../utils/errorUtils.js';
@@ -35,6 +36,7 @@ export class ExecutionPipeline extends EventEmitter {
   private readonly maxHistorySize: number;
   private readonly sessionApprovals = new Set<string>();
   private readonly hooks?: ExecutionPipelineHooks;
+  private readonly logger: InternalLogger;
 
   constructor(
     private registry: ToolRegistry,
@@ -44,6 +46,7 @@ export class ExecutionPipeline extends EventEmitter {
 
     this.maxHistorySize = config.maxHistorySize || 1000;
     this.hooks = config.hooks;
+    this.logger = (config.logger ?? NOOP_LOGGER).child(LogCategory.EXECUTION);
 
     const permissionConfig: PermissionsConfig = config.permissionConfig || {
       allow: [],
@@ -55,7 +58,8 @@ export class ExecutionPipeline extends EventEmitter {
     const permissionStage = new PermissionStage(
       permissionConfig,
       this.sessionApprovals,
-      permissionMode
+      permissionMode,
+      this.logger,
     );
 
     this.stages = [
@@ -65,7 +69,8 @@ export class ExecutionPipeline extends EventEmitter {
       new ConfirmationStage(
         this.sessionApprovals,
         permissionStage.getPermissionChecker(),
-        config.canUseTool
+        config.canUseTool,
+        this.logger,
       ),
       new ExecutionStage(),
       new PostToolUseHookStage(),
@@ -119,7 +124,7 @@ export class ExecutionPipeline extends EventEmitter {
 
     // 如果需要文件锁，使用 FileLockManager
     if (needsFileLock && filePath) {
-      const lockManager = FileLockManager.getInstance();
+      const lockManager = FileLockManager.getInstance(this.logger);
       const result = await lockManager.acquireLock(filePath, () =>
         this.executeWithPipeline(execution, executionId, startTime)
       );
@@ -546,6 +551,7 @@ export interface ExecutionPipelineConfig {
   permissionMode?: PermissionMode;
   canUseTool?: CanUseTool;
   hooks?: ExecutionPipelineHooks;
+  logger?: InternalLogger;
 }
 
 export interface ExecutionPipelineHookContext {

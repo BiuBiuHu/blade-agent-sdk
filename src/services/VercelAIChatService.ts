@@ -1,7 +1,7 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, jsonSchema, type LanguageModel, Output, streamText } from 'ai';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import type { OutputFormat } from '../types/common.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
 import type {
   ChatConfig,
   ChatResponse,
@@ -12,8 +12,6 @@ import type {
   ToolCall,
   UsageInfo,
 } from './ChatServiceInterface.js';
-
-const logger = createLogger(LogCategory.CHAT);
 
 function filterOrphanToolMessages(messages: Message[]): Message[] {
   const availableToolCallIds = new Set<string>();
@@ -60,7 +58,11 @@ type AITool = {
   inputSchema: unknown;
 };
 
-function safeJsonParse(str: string, fallback: unknown = {}): unknown {
+function safeJsonParse(
+  str: string,
+  logger: InternalLogger,
+  fallback: unknown = {},
+): unknown {
   try {
     return JSON.parse(str);
   } catch {
@@ -73,15 +75,17 @@ export class VercelAIChatService implements IChatService {
   private model!: LanguageModel;
   private config: ChatConfig;
   private initialized: Promise<void>;
+  private readonly logger: InternalLogger;
 
-  constructor(config: ChatConfig) {
+  constructor(config: ChatConfig, logger: InternalLogger = NOOP_LOGGER) {
     this.config = config;
+    this.logger = logger.child(LogCategory.CHAT);
     this.initialized = this.initModel(config);
   }
 
   private async initModel(config: ChatConfig): Promise<void> {
     this.model = await this.createModel(config);
-    logger.debug('🚀 [VercelAIChatService] Initialized', {
+    this.logger.debug('🚀 [VercelAIChatService] Initialized', {
       provider: config.provider,
       model: config.model,
       providerId: config.providerId,
@@ -236,7 +240,7 @@ export class VercelAIChatService implements IChatService {
               type: 'tool-call' as const,
               toolCallId: tc.id,
               toolName: fn?.name || '',
-              input: safeJsonParse(fn?.arguments || '{}', {}),
+              input: safeJsonParse(fn?.arguments || '{}', this.logger, {}),
             };
           });
           const text = getTextContent(msg.content);
@@ -348,7 +352,7 @@ export class VercelAIChatService implements IChatService {
   ): Promise<ChatResponse> {
     await this.initialized;
     const startTime = Date.now();
-    logger.debug('🚀 [VercelAIChatService] Starting chat request');
+    this.logger.debug('🚀 [VercelAIChatService] Starting chat request');
 
     const filteredMessages = filterOrphanToolMessages(messages);
     const coreMessages = this.convertMessages(filteredMessages);
@@ -367,7 +371,7 @@ export class VercelAIChatService implements IChatService {
       });
 
       const duration = Date.now() - startTime;
-      logger.debug('📥 [VercelAIChatService] Response received in', duration, 'ms');
+      this.logger.debug('📥 [VercelAIChatService] Response received in', duration, 'ms');
 
       const toolCalls =
         result.toolCalls && result.toolCalls.length > 0
@@ -391,7 +395,7 @@ export class VercelAIChatService implements IChatService {
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      logger.error('❌ [VercelAIChatService] Chat failed after', duration, 'ms');
+      this.logger.error('❌ [VercelAIChatService] Chat failed after', duration, 'ms');
       throw error;
     }
   }
@@ -403,7 +407,7 @@ export class VercelAIChatService implements IChatService {
   ): AsyncGenerator<StreamChunk, void, unknown> {
     await this.initialized;
     const startTime = Date.now();
-    logger.debug('🚀 [VercelAIChatService] Starting stream request');
+    this.logger.debug('🚀 [VercelAIChatService] Starting stream request');
 
     const filteredMessages = filterOrphanToolMessages(messages);
     const coreMessages = this.convertMessages(filteredMessages);
@@ -421,7 +425,7 @@ export class VercelAIChatService implements IChatService {
         experimental_output: experimentalOutput,
       });
 
-      logger.debug('📥 [VercelAIChatService] Stream started');
+      this.logger.debug('📥 [VercelAIChatService] Stream started');
 
       let toolCallIndex = 0;
       for await (const part of result.fullStream) {
@@ -463,10 +467,10 @@ export class VercelAIChatService implements IChatService {
       }
 
       const duration = Date.now() - startTime;
-      logger.debug('✅ [VercelAIChatService] Stream completed in', duration, 'ms');
+      this.logger.debug('✅ [VercelAIChatService] Stream completed in', duration, 'ms');
     } catch (error) {
       const duration = Date.now() - startTime;
-      logger.error('❌ [VercelAIChatService] Stream failed after', duration, 'ms');
+      this.logger.error('❌ [VercelAIChatService] Stream failed after', duration, 'ms');
       throw error;
     }
   }
@@ -476,9 +480,9 @@ export class VercelAIChatService implements IChatService {
   }
 
   updateConfig(newConfig: Partial<ChatConfig>): void {
-    logger.debug('🔄 [VercelAIChatService] Updating configuration');
+    this.logger.debug('🔄 [VercelAIChatService] Updating configuration');
     this.config = { ...this.config, ...newConfig };
     this.initialized = this.initModel(this.config);
-    logger.debug('✅ [VercelAIChatService] Configuration updated');
+    this.logger.debug('✅ [VercelAIChatService] Configuration updated');
   }
 }

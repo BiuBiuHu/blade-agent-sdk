@@ -4,12 +4,10 @@
  * 从 Agent.ts 拆分，职责单一：处理 Plan 模式的差异化逻辑
  */
 
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
 import { PermissionMode } from '../types/common.js';
 import type { AgentEvent, ChatContext, LoopOptions, LoopResult, UserMessageContent } from './types.js';
-
-const logger = createLogger(LogCategory.AGENT);
 
 type LoopExecutor = (
   message: UserMessageContent,
@@ -26,7 +24,11 @@ type StreamLoopExecutor = (
 ) => AsyncGenerator<AgentEvent, LoopResult>;
 
 export class PlanExecutor {
-  constructor(private language?: string) {}
+  private readonly logger: InternalLogger;
+
+  constructor(private language?: string, logger?: InternalLogger) {
+    this.logger = (logger ?? NOOP_LOGGER).child(LogCategory.AGENT);
+  }
 
   /**
    * 注入 Plan 模式 reminder 到消息中
@@ -74,7 +76,7 @@ export class PlanExecutor {
     options: LoopOptions | undefined,
     executeLoop: LoopExecutor,
   ): Promise<LoopResult> {
-    logger.debug('🔵 Processing Plan mode message...');
+    this.logger.debug('🔵 Processing Plan mode message...');
     const systemPrompt = await this.buildPlanSystemPrompt();
     const messageWithReminder = this.injectPlanReminder(message);
     return executeLoop(messageWithReminder, context, options, systemPrompt);

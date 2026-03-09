@@ -4,11 +4,14 @@ import type { AgentRuntimeDeps } from '../agent/Agent.js';
 import { getCheckpointService } from '../checkpoint/index.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { HookManager } from '../hooks/HookManager.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import type { InternalLogger } from '../logging/Logger.js';
+import { LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import type { SdkMcpServerHandle } from '../mcp/SdkMcpServer.js';
 import { McpConnectionStatus } from '../mcp/types.js';
+import { getSandboxExecutor } from '../sandbox/SandboxExecutor.js';
 import { getSandboxService } from '../sandbox/SandboxService.js';
+import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { toolFromDefinition } from '../tools/core/createTool.js';
 import {
@@ -16,6 +19,7 @@ import {
   type ExecutionPipelineHookResult,
   type ExecutionPipelineHooks,
 } from '../tools/execution/ExecutionPipeline.js';
+import { FileLockManager } from '../tools/execution/FileLockManager.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool } from '../tools/types/index.js';
 import type { BladeConfig, McpServerConfig, PermissionsConfig } from '../types/common.js';
@@ -23,8 +27,6 @@ import { PermissionMode } from '../types/common.js';
 import { HookEvent } from '../types/constants.js';
 import type { CanUseTool, PermissionResult } from '../types/permissions.js';
 import type { HookCallback, HookInput, HookOutput, McpServerStatus, McpToolInfo, SessionOptions } from './types.js';
-
-const logger = createLogger(LogCategory.AGENT);
 
 function isSdkMcpServerHandle(
   config: McpServerConfig | SdkMcpServerHandle
@@ -44,6 +46,8 @@ export class SessionRuntime {
   private readonly contextManager: ContextManager;
   private readonly executionPipeline: ExecutionPipeline;
   private readonly hookCallbacks: Partial<Record<HookEvent, HookCallback[]>>;
+  private readonly rootLogger: InternalLogger;
+  private readonly logger: InternalLogger;
   private initialized = false;
 
   constructor(
@@ -52,7 +56,10 @@ export class SessionRuntime {
     private readonly bladeConfig: BladeConfig,
     private readonly permissionMode: PermissionMode,
     private readonly workspaceRoot: string,
+    logger: InternalLogger,
   ) {
+    this.rootLogger = logger;
+    this.logger = logger.child(LogCategory.AGENT);
     this.contextManager = new ContextManager({ projectPath: workspaceRoot });
     this.hookCallbacks = options.hooks || {};
     this.executionPipeline = this.createExecutionPipeline();
@@ -65,6 +72,7 @@ export class SessionRuntime {
       workspaceRoot: this.workspaceRoot,
       mcpRegistry: this.mcpRegistry,
       runtimeManaged: true,
+      logger: this.rootLogger,
     };
   }
 
@@ -84,14 +92,17 @@ export class SessionRuntime {
     if (this.initialized) return;
 
     if (this.options.sandbox) {
+      getSandboxExecutor(this.rootLogger);
       getSandboxService().configure(this.options.sandbox);
     }
 
     if (this.options.enableFileCheckpointing) {
-      getCheckpointService().configure({ enabled: true });
+      getCheckpointService(this.rootLogger).configure({ enabled: true });
     }
 
     await this.contextManager.initialize();
+    FileAccessTracker.getInstance(this.rootLogger);
+    FileLockManager.getInstance(this.rootLogger);
     this.initializeHooks();
     await this.registerBuiltinTools();
     this.registerCustomTools();
@@ -168,6 +179,7 @@ export class SessionRuntime {
       maxHistorySize: 1000,
       canUseTool: this.createCanUseTool(),
       hooks: this.createExecutionPipelineHooks(),
+      logger: this.rootLogger,
     });
   }
 
@@ -212,7 +224,7 @@ export class SessionRuntime {
       try {
         await this.mcpRegistry.registerServer(name, config);
       } catch (error) {
-        logger.warn(`[SessionRuntime] Failed to register MCP server ${name}:`, error);
+        this.logger.warn(`[SessionRuntime] Failed to register MCP server ${name}:`, error);
       }
     }
 

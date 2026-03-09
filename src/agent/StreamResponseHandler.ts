@@ -1,4 +1,4 @@
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import { streamDebug } from '../logging/StreamDebugLogger.js';
 import type {
   ChatResponse,
@@ -7,10 +7,15 @@ import type {
   StreamToolCall,
 } from '../services/ChatServiceInterface.js';
 
-const logger = createLogger(LogCategory.AGENT);
-
 export class StreamResponseHandler {
-  constructor(private getChatService: () => IChatService) {}
+  private readonly logger: InternalLogger;
+
+  constructor(
+    private getChatService: () => IChatService,
+    logger?: InternalLogger,
+  ) {
+    this.logger = (logger ?? NOOP_LOGGER).child(LogCategory.AGENT);
+  }
 
   async *streamResponse(
     messages: Message[],
@@ -76,7 +81,7 @@ export class StreamResponseHandler {
         fullContent.length === 0 &&
         toolCallAccumulator.size === 0
       ) {
-        logger.warn('[Agent] 流式响应返回0个chunk，回退到非流式模式');
+        this.logger.warn('[Agent] 流式响应返回0个chunk，回退到非流式模式');
         return chatService.chat(messages, tools, signal);
       }
 
@@ -88,7 +93,7 @@ export class StreamResponseHandler {
       };
     } catch (error) {
       if (this.isStreamingNotSupportedError(error)) {
-        logger.warn('[Agent] 流式请求失败，降级到非流式模式');
+        this.logger.warn('[Agent] 流式请求失败，降级到非流式模式');
         return chatService.chat(messages, tools, signal);
       }
       throw error;

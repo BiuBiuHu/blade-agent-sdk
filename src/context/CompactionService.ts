@@ -5,6 +5,7 @@
 
 import { nanoid } from 'nanoid';
 import { HookManager } from '../hooks/HookManager.js';
+import { NOOP_LOGGER } from '../logging/Logger.js';
 import {
   createChatServiceAsync,
   type Message,
@@ -240,7 +241,7 @@ export class CompactionService {
       maxOutputTokens: 8000, // 压缩输出限制
       timeout: 60000,
       provider: 'openai-compatible' as const,
-    });
+    }, NOOP_LOGGER);
 
     const response = await chatService.chat(
       [{ role: 'user', content: prompt }]

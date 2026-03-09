@@ -5,10 +5,9 @@
  * to their state at any previous user message.
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
-import { mkdirSync } from 'fs';
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import type {
   CheckpointConfig,
   FileChange,
@@ -18,10 +17,9 @@ import type {
   RewindResult,
 } from './types.js';
 
-const logger = createLogger(LogCategory.TOOL);
-
 export class CheckpointService {
   private static instance: CheckpointService | null = null;
+  private logger: InternalLogger = NOOP_LOGGER.child(LogCategory.TOOL);
   private config: CheckpointConfig = { enabled: false };
   private checkpoints: Map<string, MessageCheckpoint> = new Map();
   private checkpointOrder: string[] = [];
@@ -30,9 +28,12 @@ export class CheckpointService {
 
   private constructor() {}
 
-  static getInstance(): CheckpointService {
+  static getInstance(logger?: InternalLogger): CheckpointService {
     if (!CheckpointService.instance) {
       CheckpointService.instance = new CheckpointService();
+    }
+    if (logger) {
+      CheckpointService.instance.setLogger(logger);
     }
     return CheckpointService.instance;
   }
@@ -41,12 +42,16 @@ export class CheckpointService {
     CheckpointService.instance = null;
   }
 
+  setLogger(logger: InternalLogger): void {
+    this.logger = logger.child(LogCategory.TOOL);
+  }
+
   configure(config: Partial<CheckpointConfig>): void {
     this.config = { ...this.config, ...config };
     if (!this.config.enabled) {
       this.clear();
     }
-    logger.debug(`[CheckpointService] Configured: enabled=${this.config.enabled}`);
+    this.logger.debug(`[CheckpointService] Configured: enabled=${this.config.enabled}`);
   }
 
   isEnabled(): boolean {
@@ -58,7 +63,7 @@ export class CheckpointService {
     this.checkpointOrder = [];
     this.currentFileSnapshots.clear();
     this.pendingChanges = [];
-    logger.debug('[CheckpointService] Cleared all checkpoints');
+    this.logger.debug('[CheckpointService] Cleared all checkpoints');
   }
 
   private shouldExclude(filePath: string): boolean {
@@ -101,7 +106,7 @@ export class CheckpointService {
     }
 
     if (this.shouldExclude(filePath)) {
-      logger.debug(`[CheckpointService] Excluded file: ${filePath}`);
+      this.logger.debug(`[CheckpointService] Excluded file: ${filePath}`);
       return;
     }
 
@@ -119,7 +124,7 @@ export class CheckpointService {
     this.pendingChanges.push(change);
     this.currentFileSnapshots.set(filePath, afterSnapshot);
 
-    logger.debug(`[CheckpointService] Tracked ${operation}: ${filePath}`);
+    this.logger.debug(`[CheckpointService] Tracked ${operation}: ${filePath}`);
   }
 
   captureBeforeWrite(filePath: string): void {
@@ -134,7 +139,7 @@ export class CheckpointService {
     if (!this.currentFileSnapshots.has(filePath)) {
       const snapshot = this.captureSnapshot(filePath);
       this.currentFileSnapshots.set(filePath, snapshot);
-      logger.debug(`[CheckpointService] Captured before-write snapshot: ${filePath}`);
+      this.logger.debug(`[CheckpointService] Captured before-write snapshot: ${filePath}`);
     }
   }
 
@@ -162,7 +167,7 @@ export class CheckpointService {
       }
     }
 
-    logger.debug(`[CheckpointService] Created checkpoint: ${messageUuid} (${messageRole})`);
+    this.logger.debug(`[CheckpointService] Created checkpoint: ${messageUuid} (${messageRole})`);
   }
 
   getCheckpoint(messageUuid: string): MessageCheckpoint | undefined {
@@ -229,16 +234,16 @@ export class CheckpointService {
           }
           writeFileSync(filePath, snapshot.content, 'utf-8');
           restoredFiles.push(filePath);
-          logger.debug(`[CheckpointService] Restored: ${filePath}`);
+          this.logger.debug(`[CheckpointService] Restored: ${filePath}`);
         } else if (!snapshot.exists && existsSync(filePath)) {
           unlinkSync(filePath);
           deletedFiles.push(filePath);
-          logger.debug(`[CheckpointService] Deleted: ${filePath}`);
+          this.logger.debug(`[CheckpointService] Deleted: ${filePath}`);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         errors.push({ filePath, error: message });
-        logger.error(`[CheckpointService] Failed to restore ${filePath}: ${message}`);
+        this.logger.error(`[CheckpointService] Failed to restore ${filePath}: ${message}`);
       }
     }
 
@@ -250,7 +255,7 @@ export class CheckpointService {
     this.currentFileSnapshots = new Map(targetCheckpoint.fileSnapshots);
     this.pendingChanges = [];
 
-    logger.info(
+    this.logger.info(
       `[CheckpointService] Rewound to ${targetMessageUuid}: restored=${restoredFiles.length}, deleted=${deletedFiles.length}, errors=${errors.length}`
     );
 
@@ -296,6 +301,6 @@ export class CheckpointService {
   }
 }
 
-export function getCheckpointService(): CheckpointService {
-  return CheckpointService.getInstance();
+export function getCheckpointService(logger?: InternalLogger): CheckpointService {
+  return CheckpointService.getInstance(logger);
 }

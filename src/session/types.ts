@@ -3,6 +3,7 @@ import type { Message } from '../services/ChatServiceInterface.js';
 import type { ExecutionContext, ToolDefinition, ToolResult } from '../tools/types/index.js';
 import type { McpServerConfig, OutputFormat, PermissionMode, ProviderType, SandboxSettings, TokenUsage } from '../types/common.js';
 import { HookEvent } from '../types/constants.js';
+import type { AgentLogger } from '../types/logging.js';
 import type { CanUseTool } from '../types/permissions.js';
 
 export type { ExecutionContext, ProviderType, TokenUsage, ToolDefinition, ToolResult };
@@ -113,6 +114,7 @@ export interface SessionOptions {
 
   cwd?: string;
   env?: Record<string, string>;
+  logger?: AgentLogger;
 
   outputFormat?: OutputFormat;
 

@@ -3,7 +3,7 @@
  * 定义统一的聊天服务接口，支持多种 API 提供商
  */
 
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import type { JsonValue, MessageRole, OutputFormat, ProviderType } from '../types/common.js';
 import { resolveBuiltinApiKey } from './BuiltinKeyService.js';
 import { VercelAIChatService } from './VercelAIChatService.js';
@@ -34,8 +34,6 @@ export interface StreamDeltaToolCall {
     arguments?: string;
   };
 }
-
-const logger = createLogger(LogCategory.SERVICE);
 
 const BUILTIN_API_KEY = 'blade-free-tier';
 
@@ -210,13 +208,15 @@ export interface IChatService {
  * @returns Promise<IChatService> 实例
  */
 export async function createChatServiceAsync(
-  config: ChatConfig
+  config: ChatConfig,
+  logger: InternalLogger = NOOP_LOGGER,
 ): Promise<IChatService> {
+  const serviceLogger = logger.child(LogCategory.SERVICE);
   let resolvedConfig = config;
 
   if (isBuiltinApiKey(config.apiKey)) {
-    logger.info('🔑 检测到内置 API Key，正在获取...');
-    const realApiKey = await resolveBuiltinApiKey(config.apiKey);
+    serviceLogger.info('🔑 检测到内置 API Key，正在获取...');
+    const realApiKey = await resolveBuiltinApiKey(config.apiKey, logger);
     resolvedConfig = { ...config, apiKey: realApiKey };
   }
 
@@ -231,13 +231,13 @@ export async function createChatServiceAsync(
           ...resolvedConfig.customHeaders, // 用户配置优先
         },
       };
-      logger.debug(`🔧 注入 ${resolvedConfig.providerId} 特定 headers:`, Object.keys(providerHeaders));
+      serviceLogger.debug(`🔧 注入 ${resolvedConfig.providerId} 特定 headers:`, Object.keys(providerHeaders));
     }
   }
 
-  return createChatServiceInternal(resolvedConfig);
+  return createChatServiceInternal(resolvedConfig, logger);
 }
 
-function createChatServiceInternal(config: ChatConfig): IChatService {
-  return new VercelAIChatService(config);
+function createChatServiceInternal(config: ChatConfig, logger: InternalLogger): IChatService {
+  return new VercelAIChatService(config, logger);
 }

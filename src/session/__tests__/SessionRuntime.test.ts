@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { NOOP_LOGGER } from '../../logging/Logger.js';
 import type { ToolDefinition } from '../../tools/types/index.js';
 import { PermissionMode } from '../../types/common.js';
 import { HookEvent } from '../../types/constants.js';
@@ -78,6 +79,7 @@ describe('SessionRuntime', () => {
       },
       PermissionMode.DEFAULT,
       workspaceRoot,
+      NOOP_LOGGER,
     );
     await runtime.close();
   });
@@ -95,6 +97,7 @@ describe('SessionRuntime', () => {
       },
       PermissionMode.DEFAULT,
       workspaceRoot,
+      NOOP_LOGGER,
     );
 
     await runtime.initialize();
@@ -119,6 +122,7 @@ describe('SessionRuntime', () => {
       },
       PermissionMode.DEFAULT,
       workspaceRoot,
+      NOOP_LOGGER,
     );
 
     await runtime.initialize();
@@ -172,6 +176,7 @@ describe('SessionRuntime', () => {
       },
       PermissionMode.DEFAULT,
       workspaceRoot,
+      NOOP_LOGGER,
     );
 
     await runtime.initialize();
@@ -227,6 +232,7 @@ describe('SessionRuntime', () => {
       },
       PermissionMode.DEFAULT,
       workspaceRoot,
+      NOOP_LOGGER,
     );
 
     await runtime.initialize();
@@ -277,6 +283,7 @@ describe('SessionRuntime', () => {
       },
       PermissionMode.DEFAULT,
       workspaceRoot,
+      NOOP_LOGGER,
     );
 
     await runtime.initialize();
