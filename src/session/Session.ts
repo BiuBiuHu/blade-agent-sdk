@@ -134,6 +134,16 @@ class Session implements ISession {
 
   private buildModelConfig(): ModelConfig {
     const provider = this.options.provider;
+    const openAIHeaders = provider.type === 'openai'
+      ? {
+        ...(provider.organization ? { 'OpenAI-Organization': provider.organization } : {}),
+        ...(provider.projectId ? { 'OpenAI-Project': provider.projectId } : {}),
+      }
+      : {};
+    const headers = {
+      ...provider.headers,
+      ...openAIHeaders,
+    };
 
     return {
       id: 'default',
@@ -142,12 +152,14 @@ class Session implements ISession {
       model: this.options.model,
       apiKey: provider.apiKey || '',
       baseUrl: provider.baseUrl || this.getDefaultBaseUrl(provider.type),
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
       maxContextTokens: 128000,
     };
   }
 
   private mapProviderType(type: ProviderConfig['type']): ProviderType {
     const mapping: Record<string, ProviderType> = {
+      openai: 'openai',
       'openai-compatible': 'openai-compatible',
       anthropic: 'anthropic',
       gemini: 'gemini',
@@ -158,6 +170,7 @@ class Session implements ISession {
 
   private getDefaultBaseUrl(type: ProviderConfig['type']): string {
     const urls: Record<string, string> = {
+      openai: 'https://api.openai.com/v1',
       'openai-compatible': 'https://api.openai.com/v1',
       anthropic: 'https://api.anthropic.com',
       gemini: 'https://generativelanguage.googleapis.com',

@@ -1,3 +1,8 @@
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createAzure } from '@ai-sdk/azure';
+import { createDeepSeek } from '@ai-sdk/deepseek';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, jsonSchema, type LanguageModel, Output, streamText } from 'ai';
 import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
@@ -96,8 +101,16 @@ export class VercelAIChatService implements IChatService {
     const { provider, apiKey, baseUrl, model, customHeaders, providerId, apiVersion } = config;
 
     switch (provider) {
+      case 'openai': {
+        const openai = createOpenAI({
+          apiKey,
+          baseURL: baseUrl || undefined,
+          headers: customHeaders,
+        });
+        return openai(model);
+      }
+
       case 'anthropic': {
-        const { createAnthropic } = await import('@ai-sdk/anthropic');
         const anthropic = createAnthropic({
           apiKey,
           baseURL: baseUrl || undefined,
@@ -116,7 +129,6 @@ export class VercelAIChatService implements IChatService {
           });
           return compatible(model);
         }
-        const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
         const google = createGoogleGenerativeAI({
           apiKey,
           baseURL: baseUrl || undefined,
@@ -127,7 +139,6 @@ export class VercelAIChatService implements IChatService {
       case 'azure-openai': {
         const resourceName = this.extractAzureResourceName(baseUrl);
         if (resourceName) {
-          const { createAzure } = await import('@ai-sdk/azure');
           const azure = createAzure({
             apiKey,
             resourceName,
@@ -153,7 +164,6 @@ export class VercelAIChatService implements IChatService {
 
       default: {
         if (providerId === 'deepseek') {
-          const { createDeepSeek } = await import('@ai-sdk/deepseek');
           const deepseek = createDeepSeek({
             apiKey,
             baseURL: baseUrl || undefined,

@@ -489,10 +489,12 @@ export class LoopRunner {
             context.messages,
             {
               trigger: 'auto',
+              provider: cs.provider,
               modelName: cs.model,
               maxContextTokens: cs.maxContextTokens ?? 128000,
               apiKey: cs.apiKey,
               baseURL: cs.baseUrl,
+              customHeaders: cs.customHeaders,
             }
           );
           context.messages = compactResult.compactedMessages;

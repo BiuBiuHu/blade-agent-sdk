@@ -10,7 +10,7 @@ import {
   createChatServiceAsync,
   type Message,
 } from '../services/ChatServiceInterface.js';
-import { PermissionMode } from '../types/common.js';
+import { PermissionMode, type ProviderType } from '../types/common.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
 
@@ -28,6 +28,10 @@ export interface CompactionOptions {
   apiKey?: string;
   /** Base URL（可选，默认使用环境变量） */
   baseURL?: string;
+  /** Provider 类型（可选，默认从调用方透传或按 baseURL 推断） */
+  provider?: ProviderType;
+  /** Provider 自定义 headers（可选，压缩时沿用主对话配置） */
+  customHeaders?: Record<string, string>;
   /** 真实的 preTokens（可选，来自 LLM usage，比估算更准确） */
   actualPreTokens?: number;
   /** 会话 ID（用于 hooks） */
@@ -228,19 +232,21 @@ export class CompactionService {
     options: CompactionOptions
   ): Promise<string> {
     const prompt = CompactionService.buildCompactionPrompt(messages, fileContents);
+    const baseURL =
+      options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1';
 
     console.log('[CompactionService] 使用压缩模型:', options.modelName);
 
     // 创建 ChatService
     const chatService = await createChatServiceAsync({
       apiKey: options.apiKey || process.env.BLADE_API_KEY || '',
-      baseUrl:
-        options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1',
+      baseUrl: baseURL,
       model: options.modelName,
       temperature: 0.3,
       maxOutputTokens: 8000, // 压缩输出限制
       timeout: 60000,
-      provider: 'openai-compatible' as const,
+      provider: options.provider || CompactionService.inferProvider(baseURL),
+      customHeaders: options.customHeaders,
     }, NOOP_LOGGER);
 
     const response = await chatService.chat(
@@ -259,6 +265,30 @@ export class CompactionService {
     }
 
     return summaryMatch[1].trim();
+  }
+
+  private static inferProvider(baseURL?: string): ProviderType {
+    if (!baseURL) {
+      return 'openai';
+    }
+
+    const normalized = baseURL.toLowerCase();
+    if (normalized.includes('api.openai.com')) {
+      return 'openai';
+    }
+    if (normalized.includes('.openai.azure')) {
+      return 'azure-openai';
+    }
+    if (normalized.includes('api.anthropic.com')) {
+      return 'anthropic';
+    }
+    if (
+      normalized.includes('generativelanguage.googleapis.com')
+      || normalized.includes('aiplatform.googleapis.com')
+    ) {
+      return 'gemini';
+    }
+    return 'openai-compatible';
   }
 
   /**

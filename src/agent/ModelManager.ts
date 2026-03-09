@@ -90,6 +90,7 @@ export class ModelManager {
       apiKey: modelConfig.apiKey || '',
       model: modelConfig.model,
       baseUrl: modelConfig.baseUrl || '',
+      customHeaders: modelConfig.headers,
       temperature: modelConfig.temperature ?? this.config.temperature,
       maxContextTokens: this.currentModelMaxContextTokens,
       supportsThinking,

@@ -1,0 +1,47 @@
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { Message } from '../../services/ChatServiceInterface.js';
+
+const mockCreateChatServiceAsync = mock(async (_config: Record<string, unknown>) => ({
+  chat: async () => ({
+    content: '<summary>ok</summary>',
+  }),
+}));
+
+mock.module('../../services/ChatServiceInterface.js', () => ({
+  createChatServiceAsync: mockCreateChatServiceAsync,
+}));
+
+const { CompactionService } = await import('../CompactionService.js');
+
+describe('CompactionService', () => {
+  beforeEach(() => {
+    mockCreateChatServiceAsync.mockClear();
+  });
+
+  it('uses the native openai provider for official OpenAI compaction requests', async () => {
+    const messages: Message[] = [{ role: 'user', content: 'hello' }];
+
+    await (CompactionService as unknown as {
+      generateSummary: (
+        messages: Message[],
+        fileContents: unknown[],
+        options: Record<string, unknown>,
+      ) => Promise<string>;
+    }).generateSummary(messages, [], {
+      trigger: 'manual',
+      modelName: 'gpt-5',
+      maxContextTokens: 128000,
+      apiKey: 'test-key',
+      baseURL: 'https://api.openai.com/v1',
+    });
+
+    expect(mockCreateChatServiceAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5',
+      }),
+      expect.anything(),
+    );
+  });
+});

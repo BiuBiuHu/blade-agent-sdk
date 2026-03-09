@@ -5,6 +5,7 @@
       "name": "@blade-ai/agent-sdk",
       "dependencies": {
         "@agentclientprotocol/sdk": "^0.12.0",
+        "@ai-sdk/openai": "^3.0.26",
         "@ai-sdk/openai-compatible": "^2.0.4",
         "@modelcontextprotocol/sdk": "^1.17.4",
         "ai": "^6.0.39",

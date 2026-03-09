@@ -59,10 +59,12 @@ export class CompactionHandler {
     try {
       const result = await CompactionService.compact(context.messages, {
         trigger: 'auto',
+        provider: chatConfig.provider,
         modelName,
         maxContextTokens,
         apiKey: chatConfig.apiKey,
         baseURL: chatConfig.baseUrl,
+        customHeaders: chatConfig.customHeaders,
         actualPreTokens: actualPromptTokens,
       });
 
@@ -121,10 +123,12 @@ export class CompactionHandler {
       const chatConfig = chatService.getConfig();
       const compactResult = await CompactionService.compact(context.messages, {
         trigger: 'auto',
+        provider: chatConfig.provider,
         modelName: chatConfig.model,
         maxContextTokens: chatConfig.maxContextTokens ?? 128000,
         apiKey: chatConfig.apiKey,
         baseURL: chatConfig.baseUrl,
+        customHeaders: chatConfig.customHeaders,
         actualPreTokens: lastPromptTokens,
       });
 
