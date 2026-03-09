@@ -1,387 +1,204 @@
-# 会话管理
+# Session
 
-本指南介绍 Blade Agent SDK 的会话生命周期管理，包括创建、恢复、分叉会话以及 send/stream 模式的使用。
+本页介绍 Blade Agent SDK 的核心 Session API。
 
 ## 创建会话
 
-### 基本创建
-
-```typescript
+```ts
 import { createSession } from '@blade-ai/agent-sdk';
 
 const session = await createSession({
-  provider: {
-    type: 'openai-compatible',
-    apiKey: process.env.API_KEY
-  },
-  model: 'gpt-4o-mini'
-});
-```
-
-### 完整配置
-
-```typescript
-const session = await createSession({
-  provider: {
-    type: 'openai-compatible',
-    apiKey: process.env.API_KEY,
-    baseUrl: 'https://api.openai.com/v1'
-  },
+  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
   model: 'gpt-4o-mini',
-  systemPrompt: '你是一个有帮助的编程助手',
-  maxTurns: 200,
-  cwd: process.cwd(),
-  permissionMode: 'default',
-  allowedTools: ['Read', 'Write', 'Edit', 'Bash'],
-  enableFileCheckpointing: true
 });
 ```
 
-## Send/Stream 模式
+## SessionOptions
 
-Blade Agent SDK 使用 send/stream 分离模式处理消息：
+```ts
+import type { SessionOptions } from '@blade-ai/agent-sdk';
 
-1. **send()** - 提交用户消息给 Agent
-2. **stream()** - 返回异步迭代器接收响应
+const options: SessionOptions = {
+  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
+  model: 'gpt-4o-mini',
+  systemPrompt: 'You are a careful coding agent.',
+  maxTurns: 12,
+  allowedTools: ['Read', 'Edit', 'Write', 'Bash'],
+  disallowedTools: ['KillShell'],
+  cwd: process.cwd(),
+  env: { CI: '1' },
+};
+```
 
-### 基本用法
+常用字段：
 
-```typescript
-await session.send('分析这段代码并提出改进建议');
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `provider` | `ProviderConfig` | 模型提供方配置 |
+| `model` | `string` | 模型 ID |
+| `systemPrompt` | `string` | 会话级系统提示 |
+| `maxTurns` | `number` | 最大轮次 |
+| `allowedTools` | `string[]` | 仅允许指定工具 |
+| `disallowedTools` | `string[]` | 禁用指定工具 |
+| `tools` | `ToolDefinition[]` | 追加自定义工具 |
+| `mcpServers` | `Record<string, McpServerConfig \| SdkMcpServerHandle>` | MCP server 配置 |
+| `permissionMode` | `PermissionMode` | 默认权限模式 |
+| `canUseTool` | `CanUseTool` | 运行时权限决策 |
+| `hooks` | `Partial<Record<SessionHookEvent, HookCallback[]>>` | 回调式 hooks |
+| `cwd` | `string` | 工作目录 |
+| `env` | `Record<string, string>` | 传递给工具执行的环境变量 |
+| `logger` | `AgentLogger` | 结构化日志接入 |
+| `outputFormat` | `OutputFormat` | JSON Schema 结构化输出 |
+| `sandbox` | `SandboxSettings` | 命令执行沙箱配置 |
+| `agents` | `Record<string, AgentDefinition>` | 命名子代理定义 |
 
-for await (const msg of session.stream()) {
+## send / stream
+
+`send()` 只提交消息，`stream()` 负责消费这次消息对应的 Agent 输出。
+
+```ts
+await session.send('分析最近两次提交对会话持久化的影响');
+
+for await (const msg of session.stream({ includeThinking: true })) {
   switch (msg.type) {
+    case 'turn_start':
+      console.log(`turn ${msg.turn}`);
+      break;
     case 'content':
       process.stdout.write(msg.delta);
       break;
     case 'tool_use':
-      console.log(`调用工具: ${msg.name}`);
+      console.log(`[tool] ${msg.name}`);
       break;
     case 'tool_result':
-      console.log(`工具结果: ${msg.output}`);
+      console.log(`[tool-result] ${msg.name}`);
+      break;
+    case 'usage':
+      console.log(msg.usage);
       break;
     case 'result':
-      console.log('完成:', msg.subtype);
+      console.log(msg.subtype, msg.content);
       break;
   }
 }
 ```
 
-### 带选项使用
+约束：
 
-```typescript
-// 带中断信号发送
-const controller = new AbortController();
-await session.send('长时间任务', {
-  signal: controller.signal,
-  maxTurns: 10
-});
+- 调 `stream()` 之前必须先调 `send()`
+- 一条 pending message 只能被消费一次
+- 如果上一条消息还没 `stream()` 完成，不能再次 `send()`
 
-// 带思考过程的流
-for await (const msg of session.stream({ includeThinking: true })) {
-  if (msg.type === 'thinking') {
-    console.log('思考:', msg.delta);
-  }
-}
-```
+## prompt
 
-### 消息类型
+`prompt()` 适合一次性请求，不保留长期会话对象。
 
-| 类型 | 描述 | 关键字段 |
-|:-----|:-----|:---------|
-| `turn_start` | 对话轮开始 | `turn`, `sessionId` |
-| `turn_end` | 对话轮结束 | `turn` |
-| `content` | 内容增量 | `delta` |
-| `thinking` | 思考过程（如启用） | `delta` |
-| `tool_use` | 工具调用 | `id`, `name`, `input` |
-| `tool_result` | 工具执行结果 | `id`, `name`, `output`, `isError` |
-| `usage` | Token 使用统计 | `usage` |
-| `result` | 最终结果 | `subtype`, `content`, `error` |
-| `error` | 发生错误 | `message`, `code` |
-
-## 一次性 prompt
-
-对于简单的单轮交互，使用 `prompt()` 函数：
-
-```typescript
+```ts
 import { prompt } from '@blade-ai/agent-sdk';
 
-const result = await prompt('2+2 等于多少？', {
-  provider: { type: 'openai-compatible', apiKey: 'xxx' },
-  model: 'gpt-4o-mini'
+const result = await prompt('给我一份这个仓库的公开 API 摘要', {
+  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
+  model: 'gpt-4o-mini',
 });
 
-console.log(result.result);       // 响应内容
-console.log(result.toolCalls);    // 工具调用记录
-console.log(result.usage);        // Token 使用
-console.log(result.duration);     // 耗时（毫秒）
-console.log(result.turnsCount);   // 对话轮数
+console.log(result.result);
+console.log(result.toolCalls);
+console.log(result.turnsCount);
 ```
 
-## 恢复会话
+## 恢复和分叉
 
-从存储的历史记录恢复会话：
+### 恢复
 
-```typescript
+```ts
 import { resumeSession } from '@blade-ai/agent-sdk';
 
 const session = await resumeSession({
   sessionId: 'existing-session-id',
-  provider: { type: 'openai-compatible', apiKey: 'xxx' },
-  model: 'gpt-4o-mini'
-});
-
-// 继续对话
-await session.send('继续上次的话题');
-for await (const msg of session.stream()) {
-  if (msg.type === 'content') {
-    process.stdout.write(msg.delta);
-  }
-}
-```
-
-会话历史存储在 `{cwd}/.blade/sessions/{sessionId}.jsonl` 文件中。
-
-## 分叉会话
-
-从现有会话创建分支。分叉的会话继承历史但独立演进。
-
-### 从 Session 实例分叉
-
-```typescript
-// 分叉整个会话
-const forkedSession = await session.fork();
-
-// 从特定消息点分叉
-const forkedSession2 = await session.fork({
-  messageId: 'msg-uuid-123',
-  copyCheckpoints: true
+  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
+  model: 'gpt-4o-mini',
 });
 ```
 
-### 从会话 ID 分叉
+### 分叉
 
-```typescript
+```ts
 import { forkSession } from '@blade-ai/agent-sdk';
 
-const forkedSession = await forkSession({
+const forked = await forkSession({
   sessionId: 'existing-session-id',
-  messageId: 'msg-uuid-456',  // 可选
-  copyCheckpoints: true,       // 可选
-  provider: { type: 'openai-compatible', apiKey: 'xxx' },
-  model: 'gpt-4o-mini'
+  messageId: 'msg-123',
+  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
+  model: 'gpt-4o-mini',
 });
 ```
 
-### Fork 与 Resume 的区别
+也可以从实例调用：
 
-| 操作 | 描述 | 会话 ID |
-|:-----|:-----|:--------|
-| **Resume** | 继续原会话，添加新消息 | 不变 |
-| **Fork** | 从指定点创建分支，原会话不变 | 新 ID |
-
-## 会话控制
-
-### 中断操作
-
-```typescript
-// 方式1：使用 AbortSignal
-const controller = new AbortController();
-await session.send('长任务', { signal: controller.signal });
-
-// 从其他地方中断
-controller.abort();
-
-// 方式2：直接中断
-session.abort();
+```ts
+const forked = await session.fork({ messageId: 'msg-123' });
 ```
 
-### 关闭会话
+## Session 方法
 
-```typescript
-session.close();
-```
+### 生命周期
 
-### 自动清理（TypeScript 5.2+）
+- `close()`：关闭会话并释放资源
+- `abort()`：中止当前执行
 
-```typescript
-await using session = await createSession({ provider, model });
-// 作用域结束时自动关闭会话
-```
+### 运行时控制
 
-## 会话配置
+- `setPermissionMode(mode)`：切换权限模式
+- `setModel(model)`：切换后续回合的模型
+- `setMaxTurns(maxTurns)`：更新最大轮次
+- `supportedModels()`：列出当前 provider 支持的模型
 
-### 设置权限模式
+### MCP
 
-```typescript
-import { PermissionMode } from '@blade-ai/agent-sdk';
+- `mcpServerStatus()`
+- `mcpConnect(serverName)`
+- `mcpDisconnect(serverName)`
+- `mcpReconnect(serverName)`
+- `mcpListTools()`
 
-session.setPermissionMode(PermissionMode.PLAN);
-// 可选值: DEFAULT, PLAN, BYPASS_PERMISSIONS, ACCEPT_EDITS
-```
+## StreamMessage
 
-### 设置最大轮数
+`stream()` 产生的事件类型：
 
-```typescript
-session.setMaxTurns(50);
-```
+- `turn_start`
+- `turn_end`
+- `content`
+- `thinking`
+- `tool_use`
+- `tool_result`
+- `usage`
+- `result`
+- `error`
 
-### 更换模型
+## 命名子代理
 
-```typescript
-await session.setModel('gpt-4-turbo');
-```
+`agents` 用于定义命名子代理，供内置任务类工具或运行时使用：
 
-## 查询会话状态
+```ts
+import type { AgentDefinition } from '@blade-ai/agent-sdk';
 
-### 获取消息历史
-
-```typescript
-const messages = session.messages;
-console.log(`共 ${messages.length} 条消息`);
-```
-
-### 获取会话 ID
-
-```typescript
-const sessionId = session.sessionId;
-```
-
-### 获取支持的命令
-
-```typescript
-const commands = await session.supportedCommands();
-// [{ name: '/help', description: '显示帮助' }, ...]
-```
-
-### 获取支持的模型
-
-```typescript
-const models = await session.supportedModels();
-// [{ id: 'default', name: 'gpt-4o-mini', provider: 'openai-compatible' }]
-```
-
-## MCP 服务器管理
-
-### 查看服务器状态
-
-```typescript
-const status = await session.mcpServerStatus();
-for (const server of status) {
-  console.log(`${server.name}: ${server.status}`);
-  console.log(`工具数: ${server.toolCount}`);
-}
-```
-
-### 连接/断开服务器
-
-```typescript
-await session.mcpConnect('filesystem');
-await session.mcpDisconnect('filesystem');
-await session.mcpReconnect('filesystem');
-```
-
-### 列出 MCP 工具
-
-```typescript
-const tools = await session.mcpListTools();
-for (const tool of tools) {
-  console.log(`${tool.name} (${tool.serverName}): ${tool.description}`);
-}
-```
-
-## 文件检查点
-
-启用文件变更追踪和回滚：
-
-```typescript
-const session = await createSession({
-  enableFileCheckpointing: true,
-  // ...
-});
-
-// Agent 修改文件
-await session.send('重构 src/utils.ts');
-for await (const msg of session.stream()) {
-  // ...
-}
-
-// 需要时回滚
-const result = await session.rewindFiles('user-message-uuid');
-if (result.success) {
-  console.log('已恢复:', result.restoredFiles);
-  console.log('已删除:', result.deletedFiles);
-}
-
-// 查看统计
-const stats = session.getCheckpointStatistics();
-console.log('检查点数:', stats?.checkpointCount);
-```
-
-详见 [文件检查点](./checkpoint.md)。
-
-## 完整示例
-
-```typescript
-import { createSession } from '@blade-ai/agent-sdk';
-
-async function main() {
-  // 创建带完整配置的会话
-  await using session = await createSession({
-    provider: {
-      type: 'openai-compatible',
-      apiKey: process.env.API_KEY
-    },
+const agents: Record<string, AgentDefinition> = {
+  research: {
+    name: 'research',
+    description: 'Investigate repository structure and summarize findings',
+    allowedTools: ['Read', 'Glob', 'Grep'],
     model: 'gpt-4o-mini',
-    systemPrompt: '你是一个有帮助的编程助手',
-    maxTurns: 100,
-    enableFileCheckpointing: true,
-    sandbox: {
-      enabled: true,
-      autoAllowBashIfSandboxed: true
-    }
-  });
-
-  console.log('会话 ID:', session.sessionId);
-
-  // 第一次交互
-  await session.send('分析项目结构');
-  for await (const msg of session.stream()) {
-    if (msg.type === 'content') {
-      process.stdout.write(msg.delta);
-    }
-  }
-
-  // 分叉进行实验
-  const experimentSession = await session.fork();
-  
-  await experimentSession.send('尝试不同的方案');
-  for await (const msg of experimentSession.stream()) {
-    if (msg.type === 'content') {
-      process.stdout.write(msg.delta);
-    }
-  }
-
-  // 实验失败，原会话不受影响
-  experimentSession.close();
-
-  // 继续原会话
-  await session.send('继续原来的计划');
-  for await (const msg of session.stream()) {
-    if (msg.type === 'content') {
-      process.stdout.write(msg.delta);
-    }
-  }
-}
-
-main();
+  },
+};
 ```
 
-## 最佳实践
+## 自动清理
 
-1. **使用自动清理** - TypeScript 5.2+ 推荐使用 `await using` 语法
-2. **设置合理的 maxTurns** - 防止无限循环
-3. **处理错误** - 监控 `error` 类型消息并捕获异常
-4. **使用 AbortSignal** - 为长任务提供取消能力
-5. **分叉进行实验** - 探索不同方向时使用 `fork()`
-6. **启用检查点** - 使用 `enableFileCheckpointing` 保护文件安全
+如果运行环境支持 `using` / `AsyncDisposable`，可以这样写：
+
+```ts
+await using session = await createSession({
+  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
+  model: 'gpt-4o-mini',
+});
+```
