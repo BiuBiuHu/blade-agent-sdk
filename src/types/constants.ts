@@ -14,7 +14,6 @@ export const PermissionMode = {
   YOLO: 'yolo',
   BYPASSALL: 'bypassAll',
   PLAN: 'plan',
-  SPEC: 'spec',
 } as const;
 
 export type PermissionMode = (typeof PermissionMode)[keyof typeof PermissionMode];

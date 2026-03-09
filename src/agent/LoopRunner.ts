@@ -9,7 +9,7 @@
 
 import { CompactionService } from '../context/CompactionService.js';
 import { HookManager } from '../hooks/HookManager.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import { buildSystemPrompt } from '../prompts/index.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import { injectSkillsMetadata } from '../skills/index.js';
@@ -45,7 +45,9 @@ function toJsonValue(value: string | object): JsonValue {
   }
 }
 
-const logger = createLogger(LogCategory.AGENT);
+function syncContextMessages(context: ChatContext, messages: Message[]): void {
+  context.messages = messages.filter((message) => message.role !== 'system');
+}
 
 /**
  * Skill 执行上下文
@@ -58,15 +60,19 @@ interface SkillExecutionContext {
 
 export class LoopRunner {
   private activeSkillContext?: SkillExecutionContext;
+  private readonly logger: InternalLogger;
 
   constructor(
     private config: BladeConfig,
     private runtimeOptions: AgentOptions,
     private modelManager: ModelManager,
     private executionPipeline: ExecutionPipeline,
+    logger?: InternalLogger,
     private streamHandler?: StreamResponseHandler,
     private compactionHandler?: CompactionHandler,
-  ) {}
+  ) {
+    this.logger = (logger ?? NOOP_LOGGER).child(LogCategory.AGENT);
+  }
 
   // ===== 普通模式入口 =====
 
@@ -75,7 +81,7 @@ export class LoopRunner {
     context: ChatContext,
     options?: LoopOptions,
   ): Promise<LoopResult> {
-    logger.debug('💬 Processing enhanced chat message...');
+    this.logger.debug('💬 Processing enhanced chat message...');
     const systemPrompt = await this.buildNormalSystemPrompt(context);
     return this.executeLoop(message, context, options, systemPrompt);
   }
@@ -151,7 +157,7 @@ export class LoopRunner {
     // 3. 保存用户消息到 JSONL
     let lastMessageUuid: string | null = null;
     try {
-      const contextMgr = this.modelManager.getExecutionEngine()?.getContextManager();
+      const contextMgr = this.modelManager.getContextManager();
       const textContent =
         typeof message === 'string'
           ? message
@@ -165,7 +171,7 @@ export class LoopRunner {
         );
       }
     } catch (error) {
-      logger.warn('[LoopRunner] 保存用户消息失败:', error);
+      this.logger.warn('[LoopRunner] 保存用户消息失败:', error);
     }
 
     // 4. 计算 maxTurns
@@ -210,7 +216,7 @@ export class LoopRunner {
         throw new Error('AgentLoop ended without result');
       }
 
-      context.messages = messages.filter((m) => m.role !== 'system');
+      syncContextMessages(context, messages);
       return result;
     } catch (error) {
       if (error instanceof Error &&
@@ -221,7 +227,7 @@ export class LoopRunner {
           metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
         };
       }
-      logger.error('[LoopRunner] AgentLoop error:', error);
+      this.logger.error('[LoopRunner] AgentLoop error:', error);
       return {
         success: false,
         error: {
@@ -272,7 +278,7 @@ export class LoopRunner {
 
   clearSkillContext(): void {
     if (this.activeSkillContext) {
-      logger.debug(`🎯 Skill "${this.activeSkillContext.skillName}" deactivated`);
+      this.logger.debug(`🎯 Skill "${this.activeSkillContext.skillName}" deactivated`);
       this.activeSkillContext = undefined;
     }
   }
@@ -285,7 +291,7 @@ export class LoopRunner {
     }
 
     const allowedTools = this.activeSkillContext.allowedTools;
-    logger.debug(`🔒 Applying Skill tool restrictions: ${allowedTools.join(', ')}`);
+    this.logger.debug(`🔒 Applying Skill tool restrictions: ${allowedTools.join(', ')}`);
 
     const filteredTools = tools.filter((tool) => {
       return allowedTools.some((allowed) => {
@@ -296,7 +302,7 @@ export class LoopRunner {
       });
     });
 
-    logger.debug(
+    this.logger.debug(
       `🔒 Filtered tools: ${filteredTools.map((t) => t.name).join(', ')} (${filteredTools.length}/${tools.length})`
     );
 
@@ -323,6 +329,7 @@ export class LoopRunner {
       chatService,
       streamHandler: this.streamHandler,
       executionPipeline: this.executionPipeline,
+      logger: this.logger,
       tools,
       messages,
       maxTurns,
@@ -355,7 +362,7 @@ export class LoopRunner {
 
       async onAssistantMessage(ctx) {
         try {
-          const contextMgr = self.modelManager.getExecutionEngine()?.getContextManager();
+          const contextMgr = self.modelManager.getContextManager();
           if (contextMgr && context.sessionId && ctx.content.trim() !== '') {
             const uuid = await contextMgr.saveMessage(
               context.sessionId, 'assistant', ctx.content,
@@ -364,13 +371,13 @@ export class LoopRunner {
             setLastUuid(uuid);
           }
         } catch (error) {
-          logger.warn('[LoopRunner] 保存助手消息失败:', error);
+          self.logger.warn('[LoopRunner] 保存助手消息失败:', error);
         }
       },
 
       async onBeforeToolExec(ctx) {
         try {
-          const contextMgr = self.modelManager.getExecutionEngine()?.getContextManager();
+          const contextMgr = self.modelManager.getContextManager();
           if (contextMgr && context.sessionId) {
             return await contextMgr.saveToolUse(
               context.sessionId, ctx.toolCall.function.name,
@@ -379,7 +386,7 @@ export class LoopRunner {
             );
           }
         } catch (error) {
-          logger.warn('[LoopRunner] 保存工具调用失败:', error);
+          self.logger.warn('[LoopRunner] 保存工具调用失败:', error);
         }
         return null;
       },
@@ -389,7 +396,7 @@ export class LoopRunner {
 
         // 保存工具结果到 JSONL
         try {
-          const contextMgr = self.modelManager.getExecutionEngine()?.getContextManager();
+          const contextMgr = self.modelManager.getContextManager();
           if (contextMgr && context.sessionId) {
             const metadata = result.metadata;
             const isSubagentStatus = (v: unknown): v is 'running' | 'completed' | 'failed' | 'cancelled' =>
@@ -415,7 +422,7 @@ export class LoopRunner {
             setLastUuid(uuid);
           }
         } catch (err) {
-          logger.warn('[LoopRunner] 保存工具结果失败:', err);
+          self.logger.warn('[LoopRunner] 保存工具结果失败:', err);
         }
 
         // Skill 激活
@@ -440,7 +447,7 @@ export class LoopRunner {
 
       async onComplete(ctx) {
         try {
-          const contextMgr = self.modelManager.getExecutionEngine()?.getContextManager();
+          const contextMgr = self.modelManager.getContextManager();
           if (contextMgr && context.sessionId && ctx.content.trim() !== '') {
             const uuid = await contextMgr.saveMessage(
               context.sessionId, 'assistant', ctx.content,
@@ -449,7 +456,7 @@ export class LoopRunner {
             setLastUuid(uuid);
           }
         } catch (error) {
-          logger.warn('[LoopRunner] 保存助手消息失败:', error);
+          self.logger.warn('[LoopRunner] 保存助手消息失败:', error);
         }
       },
 
@@ -499,7 +506,7 @@ export class LoopRunner {
           context.messages.push(continueMessage);
 
           try {
-            const contextMgr = self.modelManager.getExecutionEngine()?.getContextManager();
+            const contextMgr = self.modelManager.getContextManager();
             if (contextMgr && context.sessionId) {
               await contextMgr.saveCompaction(
                 context.sessionId, compactResult.summary,
@@ -509,7 +516,7 @@ export class LoopRunner {
               );
             }
           } catch (saveError) {
-            logger.warn('[LoopRunner] 保存压缩数据失败:', saveError);
+            self.logger.warn('[LoopRunner] 保存压缩数据失败:', saveError);
           }
 
           return {
@@ -518,7 +525,7 @@ export class LoopRunner {
             continueMessage,
           };
         } catch (compactError) {
-          logger.error('[LoopRunner] 压缩失败，使用降级策略:', compactError);
+          self.logger.error('[LoopRunner] 压缩失败，使用降级策略:', compactError);
           const recentMessages = context.messages.slice(-80);
           context.messages = recentMessages;
           return { success: true, compactedMessages: recentMessages };

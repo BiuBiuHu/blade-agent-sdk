@@ -10,10 +10,9 @@ import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 
 const execAsync = promisify(exec);
-const logger = createLogger(LogCategory.GENERAL);
 
 /**
  * 官方 Skills 仓库信息
@@ -30,9 +29,11 @@ const OFFICIAL_SKILLS_REPO = {
  */
 export class SkillInstaller {
   private skillsDir: string;
+  private readonly logger: InternalLogger;
 
-  constructor(skillsDir?: string) {
+  constructor(skillsDir?: string, logger: InternalLogger = NOOP_LOGGER) {
     this.skillsDir = skillsDir || path.join(homedir(), '.blade', 'skills');
+    this.logger = logger.child(LogCategory.GENERAL);
   }
 
   /**
@@ -71,11 +72,11 @@ export class SkillInstaller {
     try {
       // 检查 git
       if (!(await this.isGitAvailable())) {
-        logger.warn('Git not available, skipping skill installation');
+        this.logger.warn('Git not available, skipping skill installation');
         return false;
       }
 
-      logger.info(`Installing official skill: ${skillName}...`);
+      this.logger.info(`Installing official skill: ${skillName}...`);
 
       // 确保目录存在
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
@@ -93,7 +94,7 @@ export class SkillInstaller {
       try {
         await fs.access(sourceDir);
       } catch {
-        logger.warn(`Skill ${skillName} not found in official repository`);
+        this.logger.warn(`Skill ${skillName} not found in official repository`);
         await fs.rm(tempDir, { recursive: true, force: true });
         return false;
       }
@@ -111,7 +112,7 @@ export class SkillInstaller {
       // 清理临时目录
       await fs.rm(tempDir, { recursive: true, force: true });
 
-      logger.info(`Successfully installed: ${skillName}`);
+      this.logger.info(`Successfully installed: ${skillName}`);
       return true;
     } catch (error) {
       // 清理临时目录
@@ -121,7 +122,7 @@ export class SkillInstaller {
         // 忽略
       }
 
-      logger.warn(
+      this.logger.warn(
         `Failed to install ${skillName}: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
       return false;
@@ -156,11 +157,11 @@ export class SkillInstaller {
 
     try {
       if (!(await this.isGitAvailable())) {
-        logger.warn('Git not available, cannot install from repo');
+        this.logger.warn('Git not available, cannot install from repo');
         return false;
       }
 
-      logger.info(`Installing skill from repo: ${repoUrl}...`);
+      this.logger.info(`Installing skill from repo: ${repoUrl}...`);
 
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
@@ -173,7 +174,7 @@ export class SkillInstaller {
       try {
         await fs.access(skillMdPath);
       } catch {
-        logger.warn(`No SKILL.md found in repository ${repoUrl}`);
+        this.logger.warn(`No SKILL.md found in repository ${repoUrl}`);
         await fs.rm(tempDir, { recursive: true, force: true });
         return false;
       }
@@ -187,7 +188,7 @@ export class SkillInstaller {
         // ignore
       }
 
-      logger.info(`Successfully installed skill from repo: ${name}`);
+      this.logger.info(`Successfully installed skill from repo: ${name}`);
       return true;
     } catch (error) {
       try {
@@ -195,7 +196,7 @@ export class SkillInstaller {
       } catch {
         // ignore
       }
-      logger.warn(
+      this.logger.warn(
         `Failed to install from repo ${repoUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
       return false;
@@ -218,7 +219,7 @@ export class SkillInstaller {
       try {
         await fs.access(sourcePath);
       } catch {
-        logger.warn(`Local path does not exist: ${sourcePath}`);
+        this.logger.warn(`Local path does not exist: ${sourcePath}`);
         return false;
       }
 
@@ -226,11 +227,11 @@ export class SkillInstaller {
       try {
         await fs.access(skillMdPath);
       } catch {
-        logger.warn(`No SKILL.md found in local path: ${sourcePath}`);
+        this.logger.warn(`No SKILL.md found in local path: ${sourcePath}`);
         return false;
       }
 
-      logger.info(`Installing skill from local path: ${sourcePath}...`);
+      this.logger.info(`Installing skill from local path: ${sourcePath}...`);
 
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
@@ -238,15 +239,15 @@ export class SkillInstaller {
 
       if (symlink) {
         await fs.symlink(sourcePath, targetPath, 'dir');
-        logger.info(`Created symlink for skill: ${name}`);
+        this.logger.info(`Created symlink for skill: ${name}`);
       } else {
         await fs.cp(sourcePath, targetPath, { recursive: true });
-        logger.info(`Copied skill to: ${name}`);
+        this.logger.info(`Copied skill to: ${name}`);
       }
 
       return true;
     } catch (error) {
-      logger.warn(
+      this.logger.warn(
         `Failed to install from local path ${localSourcePath}: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
       return false;
@@ -273,7 +274,7 @@ export class SkillInstaller {
     try {
       // 检查 git
       if (!(await this.isGitAvailable())) {
-        logger.warn('Git not available, skipping skill installation');
+        this.logger.warn('Git not available, skipping skill installation');
         return { installed, failed };
       }
 
@@ -281,7 +282,7 @@ export class SkillInstaller {
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
       // 克隆整个仓库
-      logger.info('Cloning official skills repository...');
+      this.logger.info('Cloning official skills repository...');
       await execAsync(
         `git clone --depth 1 --branch ${branch} --single-branch ${url} "${tempDir}"`,
         { timeout: 60000 }
@@ -306,10 +307,10 @@ export class SkillInstaller {
           await fs.rm(localPath, { recursive: true, force: true });
           await fs.cp(sourceDir, localPath, { recursive: true });
 
-          logger.info(`Installed: ${skillName}`);
+          this.logger.info(`Installed: ${skillName}`);
           installed.push(skillName);
         } catch (_error) {
-          logger.warn(`Failed to install ${skillName}`);
+          this.logger.warn(`Failed to install ${skillName}`);
           failed.push(skillName);
         }
       }
@@ -323,7 +324,7 @@ export class SkillInstaller {
       } catch {
         // 忽略
       }
-      logger.warn(
+      this.logger.warn(
         `Failed to install skills: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
@@ -337,11 +338,9 @@ export class SkillInstaller {
  */
 let installerInstance: SkillInstaller | null = null;
 
-export function getSkillInstaller(skillsDir?: string): SkillInstaller {
+export function getSkillInstaller(skillsDir?: string, logger?: InternalLogger): SkillInstaller {
   if (!installerInstance) {
-    installerInstance = new SkillInstaller(skillsDir);
+    installerInstance = new SkillInstaller(skillsDir, logger);
   }
   return installerInstance;
 }
-
-

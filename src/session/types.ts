@@ -1,9 +1,10 @@
+import type { SdkMcpServerHandle } from '../mcp/SdkMcpServer.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { ExecutionContext, ToolDefinition, ToolResult } from '../tools/types/index.js';
 import type { McpServerConfig, OutputFormat, PermissionMode, ProviderType, SandboxSettings, TokenUsage } from '../types/common.js';
-import type { HookEvent } from '../types/constants.js';
+import { HookEvent } from '../types/constants.js';
+import type { AgentLogger } from '../types/logging.js';
 import type { CanUseTool } from '../types/permissions.js';
-import type { SdkMcpServerHandle } from '../mcp/SdkMcpServer.js';
 
 export type { ExecutionContext, ProviderType, TokenUsage, ToolDefinition, ToolResult };
 
@@ -64,6 +65,16 @@ export interface HookOutput {
 
 export type HookCallback = (input: HookInput) => Promise<HookOutput>;
 
+export type SessionHookEvent =
+  | HookEvent.PreToolUse
+  | HookEvent.PostToolUse
+  | HookEvent.PostToolUseFailure
+  | HookEvent.PermissionRequest
+  | HookEvent.UserPromptSubmit
+  | HookEvent.SessionStart
+  | HookEvent.SessionEnd
+  | HookEvent.TaskCompleted;
+
 
 
 export interface SubagentInfo {
@@ -99,16 +110,16 @@ export interface SessionOptions {
   agents?: Record<string, AgentDefinition>;
   subagent?: SubagentInfo;
 
-  hooks?: Partial<Record<HookEvent, HookCallback[]>>;
+  hooks?: Partial<Record<SessionHookEvent, HookCallback[]>>;
 
   cwd?: string;
   env?: Record<string, string>;
+  logger?: AgentLogger;
 
   outputFormat?: OutputFormat;
 
   sandbox?: SandboxSettings;
 
-  enableFileCheckpointing?: boolean;
 }
 
 export interface SendOptions {
@@ -118,12 +129,6 @@ export interface SendOptions {
 
 export interface StreamOptions {
   includeThinking?: boolean;
-}
-
-export interface SlashCommand {
-  name: string;
-  description: string;
-  usage?: string;
 }
 
 export interface ModelInfo {
@@ -150,7 +155,6 @@ export interface McpToolInfo {
 
 export interface ForkSessionOptions {
   messageId?: string;
-  copyCheckpoints?: boolean;
 }
 
 export interface ForkSessionResult {
@@ -175,7 +179,6 @@ export interface ISession extends AsyncDisposable {
   setModel(model: string): Promise<void>;
   setMaxTurns(maxTurns: number): void;
 
-  supportedCommands(): Promise<SlashCommand[]>;
   supportedModels(): Promise<ModelInfo[]>;
 
   mcpServerStatus(): Promise<McpServerStatus[]>;

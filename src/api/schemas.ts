@@ -6,7 +6,7 @@
  */
 import { z } from 'zod';
 
-export const PermissionModeSchema = z.enum(['default', 'autoEdit', 'yolo', 'plan', 'spec']);
+export const PermissionModeSchema = z.enum(['default', 'autoEdit', 'yolo', 'plan']);
 export type ApiPermissionMode = z.infer<typeof PermissionModeSchema>;
 
 export const PermissionModeEnum = {
@@ -14,7 +14,6 @@ export const PermissionModeEnum = {
   AUTO_EDIT: 'autoEdit',
   YOLO: 'yolo',
   PLAN: 'plan',
-  SPEC: 'spec',
 } as const;
 
 export const MessageRoleSchema = z.enum(['user', 'assistant', 'system', 'tool']);

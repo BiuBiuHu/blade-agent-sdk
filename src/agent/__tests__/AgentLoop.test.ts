@@ -173,6 +173,50 @@ describe('agentLoop', () => {
       expect(toolStarts.length).toBe(2);
     });
 
+    it('should execute multiple tool calls in parallel', async () => {
+      let executeCount = 0;
+      let releaseFirstExecution!: () => void;
+      const firstExecutionGate = new Promise<void>((resolve) => {
+        releaseFirstExecution = resolve;
+      });
+
+      const pipeline = createMockExecutionPipeline();
+      (pipeline.execute as ReturnType<typeof mock>).mockImplementation(async (toolName: string) => {
+        executeCount++;
+        if (toolName === 'ReadA') {
+          await firstExecutionGate;
+        }
+        return {
+          success: true,
+          llmContent: `Result of ${toolName}`,
+          displayContent: `Result of ${toolName}`,
+        } as ToolResult;
+      });
+
+      const chatService = createMockChatService([
+        {
+          content: 'Reading two files',
+          toolCalls: [
+            { id: 'call_1', type: 'function', function: { name: 'ReadA', arguments: '{}' } },
+            { id: 'call_2', type: 'function', function: { name: 'ReadB', arguments: '{}' } },
+          ],
+        },
+        { content: 'Both files read.' },
+      ]);
+
+      const loopPromise = collectEvents(agentLoop(baseConfig({
+        chatService,
+        executionPipeline: pipeline,
+      })));
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(executeCount).toBe(2);
+      releaseFirstExecution();
+
+      const { result } = await loopPromise;
+      expect(result.success).toBe(true);
+    });
+
     it('should handle tool execution failure gracefully', async () => {
       const pipeline = createMockExecutionPipeline();
       (pipeline.execute as ReturnType<typeof mock>).mockImplementation(async () => {

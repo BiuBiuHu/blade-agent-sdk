@@ -58,20 +58,32 @@ export class ToolRegistry extends EventEmitter {
    * 注销工具
    */
   unregister(name: string): boolean {
-    const tool = this.tools.get(name);
-    if (!tool) {
+    const builtinTool = this.tools.get(name);
+    if (builtinTool) {
+      this.tools.delete(name);
+      this.removeFromIndexes(builtinTool);
+
+      this.emit('toolUnregistered', {
+        type: 'builtin',
+        toolName: name,
+        timestamp: Date.now(),
+      });
+
+      return true;
+    }
+
+    const mcpTool = this.mcpTools.get(name);
+    if (!mcpTool) {
       return false;
     }
 
-    this.tools.delete(name);
-    this.removeFromIndexes(tool);
-
+    this.mcpTools.delete(name);
+    this.removeFromIndexes(mcpTool);
     this.emit('toolUnregistered', {
-      type: 'builtin',
+      type: 'mcp',
       toolName: name,
       timestamp: Date.now(),
     });
-
     return true;
   }
 
@@ -194,50 +206,9 @@ export class ToolRegistry extends EventEmitter {
       return this.getReadOnlyFunctionDeclarations();
     }
 
-    // Spec 模式：暴露只读工具 + Spec 专用工具
-    // Spec 工具（EnterSpecMode, UpdateSpec, GetSpecContext, TransitionSpecPhase, ValidateSpec, ExitSpecMode）
-    // 可以执行写操作但在 Spec 模式下自动批准
-    if (mode === PermissionMode.SPEC) {
-      return this.getSpecModeFunctionDeclarations();
-    }
-
     // 其他模式（default/autoEdit/yolo）：暴露全量工具
     // 执行阶段由 PermissionStage 根据 permissionMode 进行细粒度控制
     return this.getFunctionDeclarations();
-  }
-
-  /**
-   * Spec 模式专用工具列表
-   */
-  private static readonly SPEC_TOOLS = [
-    'EnterSpecMode',
-    'UpdateSpec',
-    'GetSpecContext',
-    'TransitionSpecPhase',
-    'AddTask',
-    'UpdateTaskStatus',
-    'ValidateSpec',
-    'ExitSpecMode',
-  ];
-
-  /**
-   * 获取 Spec 模式可用工具
-   *
-   * Spec 模式暴露全量工具，因为：
-   * 1. 实现阶段需要 Edit/Write/Bash 来写代码
-   * 2. Spec 专用工具在 Spec 模式下自动批准
-   * 3. 权限控制由执行阶段的 PermissionStage 处理
-   */
-  getSpecModeFunctionDeclarations(): FunctionDeclaration[] {
-    // Spec 模式暴露全量工具
-    return this.getFunctionDeclarations();
-  }
-
-  /**
-   * 检查是否为 Spec 专用工具
-   */
-  isSpecTool(toolName: string): boolean {
-    return ToolRegistry.SPEC_TOOLS.includes(toolName);
   }
 
   /**
@@ -301,10 +272,10 @@ export class ToolRegistry extends EventEmitter {
    */
   removeMcpTools(serverName: string): number {
     let removedCount = 0;
-    const prefix = `mcp__${serverName}__`;
+    const legacyPrefix = `mcp__${serverName}__`;
 
     for (const [name, tool] of this.mcpTools.entries()) {
-      if (name.startsWith(prefix)) {
+      if (tool.tags.includes(serverName) || name.startsWith(legacyPrefix)) {
         this.mcpTools.delete(name);
         this.removeFromIndexes(tool);
         removedCount++;

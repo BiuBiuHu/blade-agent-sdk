@@ -1,17 +1,20 @@
 import { CompactionService } from '../context/CompactionService.js';
 import type { ContextManager } from '../context/ContextManager.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import type { IChatService, Message } from '../services/ChatServiceInterface.js';
 import type { CompactingEvent } from './AgentEvent.js';
 import type { ChatContext } from './types.js';
 
-const logger = createLogger(LogCategory.AGENT);
-
 export class CompactionHandler {
+  private readonly logger: InternalLogger;
+
   constructor(
     private getChatService: () => IChatService,
-    private getContextManager: () => ContextManager | undefined
-  ) {}
+    private getContextManager: () => ContextManager | undefined,
+    logger?: InternalLogger,
+  ) {
+    this.logger = (logger ?? NOOP_LOGGER).child(LogCategory.AGENT);
+  }
 
   async *checkAndCompactInLoop(
     context: ChatContext,
@@ -19,7 +22,7 @@ export class CompactionHandler {
     actualPromptTokens?: number
   ): AsyncGenerator<CompactingEvent, boolean> {
     if (actualPromptTokens === undefined) {
-      logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
+      this.logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
       return false;
     }
 
@@ -32,7 +35,7 @@ export class CompactionHandler {
     const availableForInput = maxContextTokens - maxOutputTokens;
     const threshold = Math.floor(availableForInput * 0.8);
 
-    logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查:`, {
+    this.logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查:`, {
       promptTokens: actualPromptTokens,
       maxContextTokens,
       maxOutputTokens,
@@ -49,7 +52,7 @@ export class CompactionHandler {
       currentTurn === 0
         ? '[Agent] 触发自动压缩'
         : `[Agent] [轮次 ${currentTurn}] 触发循环内自动压缩`;
-    logger.debug(compactLogPrefix);
+    this.logger.debug(compactLogPrefix);
 
     yield { type: 'compacting', isCompacting: true };
 
@@ -66,13 +69,13 @@ export class CompactionHandler {
       if (result.success) {
         context.messages = result.compactedMessages;
 
-        logger.debug(
+        this.logger.debug(
           `[Agent] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} → ${result.postTokens} tokens (-${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%)`
         );
       } else {
         context.messages = result.compactedMessages;
 
-        logger.warn(
+        this.logger.warn(
           `[Agent] [轮次 ${currentTurn}] 压缩使用降级策略: ${result.preTokens} → ${result.postTokens} tokens`
         );
       }
@@ -91,10 +94,10 @@ export class CompactionHandler {
             },
             null
           );
-          logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩数据已保存到 JSONL`);
+          this.logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩数据已保存到 JSONL`);
         }
       } catch (saveError) {
-        logger.warn(`[Agent] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
+        this.logger.warn(`[Agent] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
       }
 
       yield { type: 'compacting', isCompacting: false };
@@ -103,7 +106,7 @@ export class CompactionHandler {
     } catch (error) {
       yield { type: 'compacting', isCompacting: false };
 
-      logger.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
+      this.logger.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
       return false;
     }
   }
@@ -161,16 +164,16 @@ export class CompactionHandler {
           );
         }
       } catch (saveError) {
-        logger.warn('[Agent] 保存压缩数据失败:', saveError);
+          this.logger.warn('[Agent] 保存压缩数据失败:', saveError);
       }
 
-      logger.info(
+      this.logger.info(
         `✅ 上下文已压缩 (${compactResult.preTokens} → ${compactResult.postTokens} tokens)，重置轮次计数`
       );
 
       return { success: true, messages: newMessages };
     } catch (compactError) {
-      logger.error('[Agent] 压缩失败，使用降级策略:', compactError);
+      this.logger.error('[Agent] 压缩失败，使用降级策略:', compactError);
 
       const systemMsg = messages.find((m) => m.role === 'system');
       const recentMessages = messages.slice(-80);
@@ -181,7 +184,7 @@ export class CompactionHandler {
       newMessages.push(...recentMessages);
       context.messages = newMessages.filter((m) => m.role !== 'system');
 
-      logger.warn(`⚠️ 降级压缩完成，保留 ${newMessages.length} 条消息`);
+      this.logger.warn(`⚠️ 降级压缩完成，保留 ${newMessages.length} 条消息`);
 
       return { success: false, messages: newMessages };
     }

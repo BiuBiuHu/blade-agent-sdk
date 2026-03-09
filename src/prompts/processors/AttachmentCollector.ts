@@ -7,13 +7,11 @@
 import fg from 'fast-glob';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
 import { splitPath } from '../../utils/pathHelpers.js';
 import { PathSecurity } from '../../utils/pathSecurity.js';
 import { AtMentionParser } from './AtMentionParser.js';
 import type { AtMention, Attachment, CollectorOptions, LineRange } from './types.js';
-
-const logger = createLogger(LogCategory.PROMPTS);
 
 type FileTreeEntry = FileTree | null;
 type FileTree = Map<string, FileTreeEntry>;
@@ -28,16 +26,18 @@ function isFileTree(value: FileTreeEntry): value is FileTree {
 export class AttachmentCollector {
   private fileCache = new Map<string, { content: string; timestamp: number }>();
   private options: Required<CollectorOptions>;
+  private readonly logger: InternalLogger;
 
-  constructor(options: CollectorOptions) {
+  constructor(options: CollectorOptions, logger: InternalLogger = NOOP_LOGGER) {
     this.options = {
       maxFileSize: 1024 * 1024, // 1MB
       maxLines: 2000,
       maxTokens: 32000,
       ...options,
     };
+    this.logger = logger.child(LogCategory.PROMPTS);
 
-    logger.debug('AttachmentCollector initialized', {
+    this.logger.debug('AttachmentCollector initialized', {
       maxFileSize: this.options.maxFileSize,
       maxLines: this.options.maxLines,
     });
@@ -67,7 +67,7 @@ export class AttachmentCollector {
       return [];
     }
 
-    logger.debug(`Found ${mentions.length} @ mentions`);
+    this.logger.debug(`Found ${mentions.length} @ mentions`);
 
     // 并行处理所有提及（参考 Claude Code 的 Promise.all）
     const jobs = mentions.map((m) => this.processOne(m));
@@ -85,7 +85,7 @@ export class AttachmentCollector {
             ? result.reason.message
             : String(result.reason);
 
-        logger.warn(`Failed to process @${mention.path}:`, error);
+        this.logger.warn(`Failed to process @${mention.path}:`, error);
 
         return {
           type: 'error' as const,
@@ -103,7 +103,7 @@ export class AttachmentCollector {
   private async processOne(mention: AtMention): Promise<Attachment> {
     // Glob 模式处理
     if (mention.isGlob) {
-      logger.debug(`Processing glob pattern: ${mention.path}`);
+      this.logger.debug(`Processing glob pattern: ${mention.path}`);
       return await this.processGlob(mention.path);
     }
 
@@ -120,12 +120,12 @@ export class AttachmentCollector {
 
     // 目录处理 - 展示树结构
     if (stats.isDirectory()) {
-      logger.debug(`Processing directory: ${mention.path}`);
+      this.logger.debug(`Processing directory: ${mention.path}`);
       return await this.renderDirectoryTree(realPath, mention.path);
     }
 
     // 文件处理
-    logger.debug(`Processing file: ${mention.path}`, {
+    this.logger.debug(`Processing file: ${mention.path}`, {
       lineRange: mention.lineRange,
     });
     return await this.readFile(realPath, mention.path, mention.lineRange);
@@ -142,7 +142,7 @@ export class AttachmentCollector {
     // 检查缓存
     const cached = this.fileCache.get(absolutePath);
     if (cached && Date.now() - cached.timestamp < 60000) {
-      logger.debug(`Cache hit: ${relativePath}`);
+      this.logger.debug(`Cache hit: ${relativePath}`);
       return this.formatFileAttachment(relativePath, cached.content, lineRange);
     }
 
@@ -270,7 +270,7 @@ export class AttachmentCollector {
       };
     }
 
-    logger.debug(`Found ${files.length} files in directory: ${relativePath}`);
+    this.logger.debug(`Found ${files.length} files in directory: ${relativePath}`);
 
     // 构建树形结构
     const tree = this.buildFileTree(files);
@@ -395,7 +395,7 @@ export class AttachmentCollector {
       };
     }
 
-    logger.debug(`Glob pattern "${pattern}" matched ${files.length} files`);
+    this.logger.debug(`Glob pattern "${pattern}" matched ${files.length} files`);
 
     // 限制最大文件数
     const maxFiles = 30;
@@ -480,7 +480,7 @@ export class AttachmentCollector {
     }
 
     if (cleared > 0) {
-      logger.debug(`Cleared ${cleared} expired cache entries`);
+      this.logger.debug(`Cleared ${cleared} expired cache entries`);
     }
   }
 
@@ -489,7 +489,7 @@ export class AttachmentCollector {
    */
   clearCache(): void {
     this.fileCache.clear();
-    logger.debug('Cleared all cache');
+    this.logger.debug('Cleared all cache');
   }
 
   /**

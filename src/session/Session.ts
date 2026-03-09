@@ -1,26 +1,21 @@
-import { JSONLStore } from '@/context/storage/JSONLStore.js';
-import { getSessionFilePath } from '@/context/storage/pathUtils.js';
 import { nanoid } from 'nanoid';
 import { Agent } from '../agent/Agent.js';
 import type { ChatContext, LoopResult } from '../agent/types.js';
-import { getCheckpointService, type RewindResult } from '../checkpoint/index.js';
-import { CommandRegistry } from '../commands/CommandRegistry.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
-import { McpRegistry } from '../mcp/McpRegistry.js';
-import { McpConnectionStatus } from '../mcp/types.js';
-import { getSandboxService } from '../sandbox/SandboxService.js';
-import type { Message, ToolCall } from '../services/ChatServiceInterface.js';
+import { createRootLogger, type InternalLogger, LogCategory } from '../logging/Logger.js';
+import type { Message } from '../services/ChatServiceInterface.js';
 import {
   type BladeConfig,
-  type McpServerConfig,
-  type MessageRole,
   type ModelConfig,
   PermissionMode,
   type ProviderType,
 } from '../types/common.js';
-import type { SdkMcpServerHandle } from '../mcp/SdkMcpServer.js';
+import { HookEvent } from '../types/constants.js';
+import { JsonlSessionStore, type SessionSnapshot, type SessionStore } from './SessionStore.js';
+import { SessionRuntime } from './SessionRuntime.js';
 import type {
   ForkSessionOptions,
+  HookCallback,
+  HookInput,
   ISession,
   McpServerStatus,
   McpToolInfo,
@@ -29,20 +24,11 @@ import type {
   ProviderConfig,
   SendOptions,
   SessionOptions,
-  SlashCommand,
   StreamMessage,
   StreamOptions,
   TokenUsage,
-  ToolCallRecord
+  ToolCallRecord,
 } from './types.js';
-
-const logger = createLogger(LogCategory.AGENT);
-
-function isSdkMcpServerHandle(
-  config: McpServerConfig | SdkMcpServerHandle
-): config is SdkMcpServerHandle {
-  return 'createClientTransport' in config && 'server' in config;
-}
 
 export interface ResumeOptions extends SessionOptions {
   sessionId: string;
@@ -51,23 +37,32 @@ export interface ResumeOptions extends SessionOptions {
 class Session implements ISession {
   readonly sessionId: string;
   private agent: Agent | null = null;
+  private runtime: SessionRuntime | null = null;
   private abortController: AbortController | null = null;
   private _messages: Message[] = [];
-  private options: SessionOptions;
+  private readonly options: SessionOptions;
+  private readonly store: SessionStore;
+  private readonly isResumeSession: boolean;
+  private readonly workspaceRoot: string;
+  private readonly rootLogger: InternalLogger;
+  private readonly logger: InternalLogger;
   private maxTurns: number;
   private permissionMode: PermissionMode;
   private initialized = false;
-  private mcpRegistry: McpRegistry;
 
   private pendingMessage: string | null = null;
   private pendingSendOptions: SendOptions | null = null;
 
-  constructor(options: SessionOptions, sessionId?: string) {
+  constructor(options: SessionOptions, sessionId?: string, isResume = false) {
     this.sessionId = sessionId || nanoid();
     this.options = options;
     this.maxTurns = options.maxTurns ?? 200;
     this.permissionMode = options.permissionMode ?? PermissionMode.DEFAULT;
-    this.mcpRegistry = new McpRegistry();
+    this.workspaceRoot = options.cwd || process.cwd();
+    this.store = new JsonlSessionStore(this.workspaceRoot);
+    this.isResumeSession = isResume;
+    this.rootLogger = createRootLogger(options.logger, this.sessionId);
+    this.logger = this.rootLogger.child(LogCategory.AGENT);
   }
 
   get messages(): Message[] {
@@ -78,16 +73,18 @@ class Session implements ISession {
     if (this.initialized) return;
 
     const config = this.buildBladeConfig();
-
-    if (this.options.sandbox) {
-      getSandboxService().configure(this.options.sandbox);
+    this.runtime = new SessionRuntime(
+      this.sessionId,
+      this.options,
+      config,
+      this.permissionMode,
+      this.workspaceRoot,
+      this.rootLogger,
+    );
+    await this.runtime.initialize();
+    if (!this.isResumeSession) {
+      await this.runtime.ensureSessionCreated();
     }
-
-    if (this.options.enableFileCheckpointing) {
-      getCheckpointService().configure({ enabled: true });
-    }
-
-    await this.registerInProcessMcpServers();
 
     this.agent = await Agent.create(config, {
       permissionMode: this.permissionMode,
@@ -96,184 +93,38 @@ class Session implements ISession {
       canUseTool: this.options.canUseTool,
       outputFormat: this.options.outputFormat,
       sandbox: this.options.sandbox,
-    });
+    }, this.runtime.getAgentRuntimeDeps());
 
     this.initialized = true;
+    await this.runHookCallbacks(HookEvent.SessionStart, {
+      isResume: this.isResumeSession,
+      resumeSessionId: this.isResumeSession ? this.sessionId : undefined,
+    });
 
-    logger.debug(`[Session] Initialized session ${this.sessionId}`);
-  }
-
-  private async registerInProcessMcpServers(): Promise<void> {
-    if (!this.options.mcpServers) return;
-
-    const registry = this.mcpRegistry;
-
-    for (const [name, config] of Object.entries(this.options.mcpServers)) {
-      if (isSdkMcpServerHandle(config)) {
-        await registry.registerInProcessServer(name, config);
-        logger.debug(`[Session] Registered in-process MCP server: ${name}`);
-      }
-    }
+    this.logger.debug(`[Session] Initialized session ${this.sessionId}`);
   }
 
   async loadHistory(): Promise<void> {
-    const workspaceRoot = this.options.cwd || process.cwd();
-    const filePath = getSessionFilePath(workspaceRoot, this.sessionId);
-    const store = new JSONLStore(filePath);
-
     try {
-      const entries = await store.readAll();
-      if (entries.length === 0) {
-        logger.debug(`[Session] No history found for session ${this.sessionId}`);
+      const state = await this.store.loadState(this.sessionId);
+      this._messages = state?.messages ?? [];
+      if (this._messages.length === 0) {
+        this.logger.debug(`[Session] No history found for session ${this.sessionId}`);
         return;
       }
-
-      interface MessageData {
-        role: MessageRole;
-        content: string;
-        toolCalls: ToolCall[];
-        toolCallId?: string;
-        name?: string;
-      }
-
-      const messageMap = new Map<string, MessageData>();
-      const toolCallMap = new Map<string, { messageId: string; toolCallId: string }>();
-
-      for (const entry of entries) {
-        if (entry.type === 'message_created') {
-          const data = entry.data as { messageId: string; role: MessageRole };
-          messageMap.set(data.messageId, {
-            role: data.role,
-            content: '',
-            toolCalls: [],
-          });
-        }
-
-        if (entry.type === 'part_created') {
-          const data = entry.data as {
-            messageId: string;
-            partType: string;
-            payload: Record<string, unknown>;
-          };
-          let message = messageMap.get(data.messageId);
-          if (!message) {
-            const inferredRole: MessageRole =
-              data.partType === 'tool_result' ? 'tool' : 'assistant';
-            message = {
-              role: inferredRole,
-              content: '',
-              toolCalls: [],
-            };
-            messageMap.set(data.messageId, message);
-          }
-
-          switch (data.partType) {
-            case 'text': {
-              const payload = data.payload as { text?: string };
-              message.content = payload.text ?? '';
-              break;
-            }
-            case 'tool_call': {
-              const payload = data.payload as {
-                toolCallId: string;
-                toolName: string;
-                input: unknown;
-              };
-              const toolCall: ToolCall = {
-                id: payload.toolCallId,
-                type: 'function',
-                function: {
-                  name: payload.toolName,
-                  arguments: typeof payload.input === 'string'
-                    ? payload.input
-                    : JSON.stringify(payload.input),
-                },
-              };
-              message.toolCalls.push(toolCall);
-              toolCallMap.set(payload.toolCallId, {
-                messageId: data.messageId,
-                toolCallId: payload.toolCallId,
-              });
-              break;
-            }
-            case 'tool_result': {
-              const payload = data.payload as {
-                toolCallId: string;
-                toolName: string;
-                output: unknown;
-                error?: string | null;
-              };
-              message.role = 'tool';
-              message.toolCallId = payload.toolCallId;
-              message.name = payload.toolName;
-              if (payload.error) {
-                message.content = `Error: ${payload.error}`;
-              } else if (payload.output === null || payload.output === undefined) {
-                message.content = '';
-              } else if (typeof payload.output === 'string') {
-                message.content = payload.output;
-              } else {
-                message.content = JSON.stringify(payload.output);
-              }
-              break;
-            }
-            case 'summary': {
-              const payload = data.payload as { text?: string };
-              message.content = payload.text ?? '';
-              break;
-            }
-          }
-        }
-      }
-
-      this._messages = Array.from(messageMap.values()).map((msg): Message => {
-        const base: Message = {
-          role: msg.role,
-          content: msg.content,
-        };
-        if (msg.toolCalls.length > 0) {
-          base.tool_calls = msg.toolCalls;
-        }
-        if (msg.toolCallId) {
-          base.tool_call_id = msg.toolCallId;
-        }
-        if (msg.name) {
-          base.name = msg.name;
-        }
-        return base;
-      });
-
-      logger.debug(`[Session] Loaded ${this._messages.length} messages from history`);
+      this.logger.debug(`[Session] Loaded ${this._messages.length} messages from history`);
     } catch (error) {
-      logger.warn(`[Session] Failed to load history for session ${this.sessionId}:`, error);
+      this.logger.warn(`[Session] Failed to load history for session ${this.sessionId}:`, error);
     }
   }
 
   private buildBladeConfig(): BladeConfig {
     const modelConfig = this.buildModelConfig();
 
-    let mcpServers: Record<string, McpServerConfig> | undefined;
-    let inProcessMcpServerNames: string[] | undefined;
-    if (this.options.mcpServers) {
-      const filtered: Record<string, McpServerConfig> = {};
-      const inProcessNames: string[] = [];
-      for (const [name, config] of Object.entries(this.options.mcpServers)) {
-        if (isSdkMcpServerHandle(config)) {
-          inProcessNames.push(name);
-        } else {
-          filtered[name] = config;
-        }
-      }
-      mcpServers = Object.keys(filtered).length > 0 ? filtered : undefined;
-      inProcessMcpServerNames = inProcessNames.length > 0 ? inProcessNames : undefined;
-    }
-
     return {
       models: [modelConfig],
       currentModelId: modelConfig.id,
       temperature: 0.7,
-      mcpServers,
-      inProcessMcpServerNames,
       permissions: {
         allow: [],
         deny: [],
@@ -327,17 +178,26 @@ class Session implements ISession {
   }
 
   async *stream(options?: StreamOptions): AsyncGenerator<StreamMessage> {
+    await this.ensureInitialized();
+
     if (this.pendingMessage === null) {
       throw new Error('No pending message. Call send() before stream().');
     }
 
-    const message = this.pendingMessage;
+    let message = this.pendingMessage;
     const sendOptions = this.pendingSendOptions;
     this.pendingMessage = null;
     this.pendingSendOptions = null;
 
+    message = await this.applyUserPromptHooks(message);
+
     const toolCalls: ToolCallRecord[] = [];
-    let totalUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, maxContextTokens: 0 };
+    let totalUsage: TokenUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      maxContextTokens: 0,
+    };
 
     this.abortController = new AbortController();
     const signal = sendOptions?.signal
@@ -348,12 +208,12 @@ class Session implements ISession {
       messages: this._messages,
       userId: 'sdk-user',
       sessionId: this.sessionId,
-      workspaceRoot: this.options.cwd || process.cwd(),
+      workspaceRoot: this.workspaceRoot,
       signal,
       permissionMode: this.permissionMode,
     };
 
-    const stream = this.agent!.streamChat(message, context, {
+    const stream = this.getAgent().streamChat(message, context, {
       maxTurns: sendOptions?.maxTurns ?? this.maxTurns,
       signal,
     });
@@ -444,14 +304,19 @@ class Session implements ISession {
       const shouldExit = loopResult.metadata?.shouldExitLoop;
 
       if (!loopResult.success && !isAborted && !shouldExit) {
-        const messageText =
-          loopResult.error?.message || 'Unknown error';
+        const messageText = loopResult.error?.message || 'Unknown error';
         yield { type: 'error', message: messageText, sessionId: this.sessionId };
         return;
       }
 
       yield { type: 'usage', usage: totalUsage, sessionId: this.sessionId };
       this._messages = context.messages;
+      await this.runHookCallbacks(HookEvent.TaskCompleted, {
+        taskId: this.sessionId,
+        taskDescription: message,
+        resultSummary: loopResult.finalMessage || '',
+        success: loopResult.success,
+      });
       yield {
         type: 'result',
         subtype: 'success',
@@ -472,7 +337,10 @@ class Session implements ISession {
     this.initialized = false;
     this.pendingMessage = null;
     this.pendingSendOptions = null;
-    logger.debug(`[Session] Closed session ${this.sessionId}`);
+    void this.runHookCallbacks(HookEvent.SessionEnd, { reason: 'other' });
+    void this.runtime?.close();
+    this.runtime = null;
+    this.logger.debug(`[Session] Closed session ${this.sessionId}`);
   }
 
   abort(): void {
@@ -486,25 +354,14 @@ class Session implements ISession {
     this.permissionMode = mode;
   }
 
-  async setModel(_model: string): Promise<void> {
-    logger.warn('[Session] setModel is not yet implemented');
+  async setModel(model: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.getAgent().setModel(model);
+    this.options.model = model;
   }
 
   setMaxTurns(maxTurns: number): void {
     this.maxTurns = maxTurns;
-  }
-
-  async supportedCommands(): Promise<SlashCommand[]> {
-    const registry = CommandRegistry.getInstance();
-    if (!registry.isInitialized()) {
-      await registry.initialize(this.options.cwd || process.cwd());
-    }
-
-    return registry.getAllCommands().map((cmd) => ({
-      name: cmd.name,
-      description: cmd.config.description || '',
-      usage: cmd.config.argumentHint,
-    }));
   }
 
   async supportedModels(): Promise<ModelInfo[]> {
@@ -518,84 +375,31 @@ class Session implements ISession {
   }
 
   async mcpServerStatus(): Promise<McpServerStatus[]> {
-    const registry = this.mcpRegistry;
-    const allServers = registry.getAllServers();
-    const statuses: McpServerStatus[] = [];
-
-    for (const [name, serverInfo] of allServers) {
-      const statusMap: Record<McpConnectionStatus, McpServerStatus['status']> = {
-        [McpConnectionStatus.CONNECTED]: 'connected',
-        [McpConnectionStatus.DISCONNECTED]: 'disconnected',
-        [McpConnectionStatus.CONNECTING]: 'connecting',
-        [McpConnectionStatus.ERROR]: 'error',
-      };
-
-      statuses.push({
-        name,
-        status: statusMap[serverInfo.status],
-        toolCount: serverInfo.tools.length,
-        tools: serverInfo.tools.map((t: { name: string }) => t.name),
-        connectedAt: serverInfo.connectedAt,
-        error: serverInfo.lastError?.message,
-      });
-    }
-
-    return statuses;
+    await this.ensureInitialized();
+    return this.getRuntime().mcpServerStatus();
   }
 
   async mcpConnect(serverName: string): Promise<void> {
     await this.ensureInitialized();
-
-    const registry = this.mcpRegistry;
-    const serverInfo = registry.getServerStatus(serverName);
-
-    if (!serverInfo) {
-      const config = this.options.mcpServers?.[serverName];
-      if (!config) {
-        throw new Error(`MCP server "${serverName}" not found in configuration`);
-      }
-      if (isSdkMcpServerHandle(config)) {
-        await registry.registerInProcessServer(serverName, config);
-      } else {
-        await registry.registerServer(serverName, config);
-      }
-    } else {
-      await registry.connectServer(serverName);
-    }
-
-    logger.debug(`[Session] Connected to MCP server: ${serverName}`);
+    await this.getRuntime().mcpConnect(serverName);
+    this.logger.debug(`[Session] Connected to MCP server: ${serverName}`);
   }
 
   async mcpDisconnect(serverName: string): Promise<void> {
-    const registry = this.mcpRegistry;
-    await registry.disconnectServer(serverName);
-    logger.debug(`[Session] Disconnected from MCP server: ${serverName}`);
+    await this.ensureInitialized();
+    await this.getRuntime().mcpDisconnect(serverName);
+    this.logger.debug(`[Session] Disconnected from MCP server: ${serverName}`);
   }
 
   async mcpReconnect(serverName: string): Promise<void> {
-    const registry = this.mcpRegistry;
-    await registry.reconnectServer(serverName);
-    logger.debug(`[Session] Reconnected to MCP server: ${serverName}`);
+    await this.ensureInitialized();
+    await this.getRuntime().mcpReconnect(serverName);
+    this.logger.debug(`[Session] Reconnected to MCP server: ${serverName}`);
   }
 
   async mcpListTools(): Promise<McpToolInfo[]> {
-    const registry = this.mcpRegistry;
-    const allServers = registry.getAllServers();
-    const tools: McpToolInfo[] = [];
-
-    for (const [serverName, serverInfo] of allServers) {
-      if (serverInfo.status === McpConnectionStatus.CONNECTED) {
-        for (const tool of serverInfo.tools) {
-          tools.push({
-            name: tool.name,
-            description: tool.description,
-            serverName,
-          });
-        }
-      }
-    }
-
-    return tools;
+    await this.ensureInitialized();
+    return this.getRuntime().mcpListTools();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -606,6 +410,20 @@ class Session implements ISession {
     if (!this.initialized) {
       await this.initialize();
     }
+  }
+
+  private getAgent(): Agent {
+    if (!this.agent) {
+      throw new Error('Session agent is not initialized');
+    }
+    return this.agent;
+  }
+
+  private getRuntime(): SessionRuntime {
+    if (!this.runtime) {
+      throw new Error('Session runtime is not initialized');
+    }
+    return this.runtime;
   }
 
   private combineSignals(signal1: AbortSignal, signal2: AbortSignal): AbortSignal {
@@ -631,110 +449,129 @@ class Session implements ISession {
     }
   }
 
-  async rewindFiles(userMessageUuid: string): Promise<RewindResult> {
-    if (!this.options.enableFileCheckpointing) {
-      return {
-        success: false,
-        restoredFiles: [],
-        deletedFiles: [],
-        errors: [{ filePath: '', error: 'File checkpointing is not enabled' }],
-      };
-    }
-
-    const checkpointService = getCheckpointService();
-    return checkpointService.rewindFiles(userMessageUuid);
-  }
-
-  getCheckpointStatistics(): { checkpointCount: number; trackedFileCount: number; pendingChangeCount: number } | null {
-    if (!this.options.enableFileCheckpointing) {
-      return null;
-    }
-    return getCheckpointService().getStatistics();
-  }
-
   async fork(options?: ForkSessionOptions): Promise<ISession> {
     await this.ensureInitialized();
-
-    const messageId = options?.messageId;
-    let messagesToCopy = [...this._messages];
-
-    if (messageId) {
-      const messageIndex = this.findMessageIndexByUuid(messageId);
-      if (messageIndex === -1) {
-        throw new Error(`Message with ID "${messageId}" not found in session history`);
-      }
-      messagesToCopy = this._messages.slice(0, messageIndex + 1);
-    }
+    const snapshot = await this.store.forkState(this.sessionId, {
+      messageId: options?.messageId,
+    });
 
     const forkedSession = new Session(this.options);
     await forkedSession.initialize();
+    forkedSession._messages = this.cloneSnapshotMessages(snapshot);
 
-    forkedSession._messages = messagesToCopy.map((msg) => ({ ...msg }));
-
-    if (options?.copyCheckpoints && this.options.enableFileCheckpointing) {
-      logger.debug(`[Session] Checkpoint copying is not yet implemented for forked sessions`);
-    }
-
-    logger.debug(
-      `[Session] Forked session ${this.sessionId} -> ${forkedSession.sessionId} with ${messagesToCopy.length} messages`
+    this.logger.debug(
+      `[Session] Forked session ${this.sessionId} -> ${forkedSession.sessionId} with ${forkedSession._messages.length} messages`,
     );
 
     return forkedSession;
   }
 
-  private findMessageIndexByUuid(messageId: string): number {
-    for (let i = 0; i < this._messages.length; i++) {
-      const msg = this._messages[i];
-      if (msg.id === messageId) {
-        return i;
+  private async applyUserPromptHooks(message: string): Promise<string> {
+    const hooks = this.runtime?.getHookCallbacks()[HookEvent.UserPromptSubmit];
+    if (!hooks || hooks.length === 0) {
+      return message;
+    }
+
+    let nextMessage = message;
+    for (const hook of hooks) {
+      const result = await this.executeHook(hook, HookEvent.UserPromptSubmit, {
+        userPrompt: nextMessage,
+      });
+      if (result.action === 'abort') {
+        throw new Error(result.reason || 'Prompt submission aborted by hook');
+      }
+      if (typeof result.modifiedInput === 'string') {
+        nextMessage = result.modifiedInput;
       }
     }
-    return this._messages.length > 0 ? this._messages.length - 1 : -1;
+
+    return nextMessage;
+  }
+
+  private async runHookCallbacks(
+    event: HookEvent,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const hooks = this.runtime?.getHookCallbacks()[event];
+    if (!hooks || hooks.length === 0) {
+      return;
+    }
+
+    for (const hook of hooks) {
+      const result = await this.executeHook(hook, event, payload);
+      if (result.action === 'abort') {
+        throw new Error(result.reason || `Hook ${event} aborted`);
+      }
+    }
+  }
+
+  private async executeHook(
+    hook: HookCallback,
+    event: HookEvent,
+    payload: Record<string, unknown>,
+  ) {
+    const input: HookInput = {
+      event,
+      sessionId: this.sessionId,
+      ...payload,
+    };
+    return hook(input);
+  }
+
+  private cloneSnapshotMessages(snapshot: SessionSnapshot | null): Message[] {
+    if (!snapshot) {
+      return [];
+    }
+
+    return snapshot.messages.map((message) => ({
+      ...message,
+      tool_calls: message.tool_calls?.map((toolCall) => ({
+        id: toolCall.id,
+        type: toolCall.type,
+        function: {
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+        },
+      })),
+    }));
   }
 }
 
 export async function createSession(options: SessionOptions): Promise<ISession> {
   const session = new Session(options);
   await session.initialize();
-  logger.debug(`[Session] Created new session: ${session.sessionId}`);
   return session;
 }
 
 export async function resumeSession(options: ResumeOptions): Promise<ISession> {
   const { sessionId, ...sessionOptions } = options;
-  const session = new Session(sessionOptions, sessionId);
+  const session = new Session(sessionOptions, sessionId, true);
   await session.initialize();
   await session.loadHistory();
-  logger.debug(`[Session] Resumed session: ${sessionId} with ${session.messages.length} messages`);
   return session;
 }
 
 export interface ForkOptions extends ResumeOptions {
   messageId?: string;
-  copyCheckpoints?: boolean;
 }
 
 export async function forkSession(options: ForkOptions): Promise<ISession> {
-  const { sessionId, messageId, copyCheckpoints, ...sessionOptions } = options;
+  const { sessionId, messageId, ...sessionOptions } = options;
 
-  const sourceSession = new Session(sessionOptions, sessionId);
+  const sourceSession = new Session(sessionOptions, sessionId, true);
   await sourceSession.initialize();
   await sourceSession.loadHistory();
 
-  const forkedSession = await sourceSession.fork({ messageId, copyCheckpoints });
+  const forkedSession = await sourceSession.fork({ messageId });
 
   sourceSession.close();
-
-  logger.debug(
-    `[Session] Forked session ${sessionId} -> ${forkedSession.sessionId} with ${forkedSession.messages.length} messages`
-  );
 
   return forkedSession;
 }
 
 export async function prompt(
   message: string,
-  options: SessionOptions
+  options: SessionOptions,
 ): Promise<PromptResult> {
   const startTime = Date.now();
   const session = new Session(options);

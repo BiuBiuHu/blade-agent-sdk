@@ -109,6 +109,7 @@ export interface ContextManagerOptions {
   defaultFilter: ContextFilter;
   compressionThreshold: number;
   enableVectorSearch?: boolean;
+  projectPath?: string;
 }
 
 /**

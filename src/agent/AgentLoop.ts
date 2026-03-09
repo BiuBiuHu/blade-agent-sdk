@@ -1,39 +1,36 @@
 /**
  * AgentLoop — 纯 Agent 循环
  *
- * 设计原则（参考 pi-mono agent-loop.ts）：
  * 1. 只负责核心循环：调用 LLM → 检查 tool calls → 执行工具 → 继续或退出
  * 2. 所有副作用（JSONL 保存、调试日志、模型切换）通过 hooks 注入
  * 3. 使用 AsyncGenerator<AgentEvent, LoopResult> 统一输出
  * 4. 与现有 AgentEvent / LoopResult 类型兼容
  */
 
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import type { InternalLogger } from '../logging/Logger.js';
 import type { ChatResponse, IChatService, Message, ToolCall } from '../services/ChatServiceInterface.js';
 import type { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/index.js';
-import { ToolErrorType } from '../tools/types/index.js';
 import type { PermissionMode } from '../types/common.js';
 import type { AgentEvent, TokenUsageInfo } from './AgentEvent.js';
 import { AGENT_TURN_SAFETY_LIMIT } from './constants.js';
+import { decideNoToolTurn } from './loop/decideNoToolTurn.js';
+import { decideTurnLimit } from './loop/decideTurnLimit.js';
+import { executeToolCalls } from './loop/executeToolCalls.js';
+import { planToolExecution } from './loop/planToolExecution.js';
+import type { FunctionToolCall } from './loop/types.js';
 import type { StreamResponseHandler } from './StreamResponseHandler.js';
 import type { LoopResult, TurnLimitResponse } from './types.js';
 
 /** LLM 工具定义（chat service 接受的格式） */
 type LlmToolDef = { name: string; description: string; parameters: unknown };
 
-/** 仅 function 类型的 tool call（过滤后的窄类型） */
-type FunctionToolCall = ToolCall & { type: 'function'; function: { name: string; arguments: string } };
-
-const logger = createLogger(LogCategory.AGENT);
-
 // ===== Loop 配置 =====
 
 /**
  * AgentLoop 的依赖注入配置
- *
- * 参考 pi-mono 的 AgentLoopConfig，通过 config 对象注入所有外部依赖。
+ * 通过 config 对象注入所有外部依赖。
  * Agent.ts 负责组装这个 config，AgentLoop 只消费它。
  */
 export interface AgentLoopConfig {
@@ -45,6 +42,9 @@ export interface AgentLoopConfig {
 
   /** 工具执行管道 */
   executionPipeline: ExecutionPipeline;
+
+  /** 内部日志器 */
+  logger?: InternalLogger;
 
   /** 可用工具定义（已经过权限过滤和 Skill 限制，LLM 格式） */
   tools: LlmToolDef[];
@@ -152,28 +152,6 @@ export interface AgentLoopConfig {
     compactedMessages?: Message[];
     continueMessage?: Message;
   }>;
-}
-
-// ===== 意图未完成检测 =====
-
-const INCOMPLETE_INTENT_PATTERNS = [
-  /：\s*$/, // 中文冒号结尾
-  /:\s*$/, // 英文冒号结尾
-  /\.\.\.\s*$/, // 省略号结尾
-  /让我(先|来|开始|查看|检查|修复)/, // 中文意图词
-  /Let me (first|start|check|look|fix)/i, // 英文意图词
-];
-
-const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。';
-
-function isIncompleteIntent(content: string): boolean {
-  return INCOMPLETE_INTENT_PATTERNS.some((p) => p.test(content));
-}
-
-function countRecentRetries(messages: Message[]): number {
-  return messages
-    .slice(-10)
-    .filter((m) => m.role === 'user' && m.content === RETRY_PROMPT).length;
 }
 
 // ===== 核心循环 =====
@@ -298,25 +276,17 @@ export async function* agentLoop(
 
     // 8. 检查是否有 tool calls
     if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
-      // === 意图未完成检测 ===
       const content = turnResult.content || '';
-      if (isIncompleteIntent(content) && countRecentRetries(messages) < 2) {
-        messages.push({ role: 'user', content: RETRY_PROMPT });
+      const noToolDecision = await decideNoToolTurn(
+        content,
+        messages,
+        turnsCount,
+        config.onStopCheck,
+      );
+      if (noToolDecision.action === 'retry' || noToolDecision.action === 'continue_with_reminder') {
+        messages.push(noToolDecision.message);
         yield { type: 'turn_end', turn: turnsCount, hasToolCalls: false };
         continue;
-      }
-
-      // === Stop Hook ===
-      if (config.onStopCheck) {
-        const stopResult = await config.onStopCheck({ content, turn: turnsCount });
-        if (!stopResult.shouldStop) {
-          const continueMessage = stopResult.continueReason
-            ? `\n\n<system-reminder>\n${stopResult.continueReason}\n</system-reminder>`
-            : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
-          messages.push({ role: 'user', content: continueMessage });
-          yield { type: 'turn_end', turn: turnsCount, hasToolCalls: false };
-          continue;
-        }
       }
 
       // === 正常结束 ===
@@ -356,9 +326,14 @@ export async function* agentLoop(
     const functionCalls = turnResult.toolCalls.filter(
       (tc): tc is FunctionToolCall => tc.type === 'function'
     );
+    const executionPlan = planToolExecution(
+      functionCalls,
+      executionPipeline.getRegistry(),
+      permissionMode,
+    );
 
     // 发射 tool_start 事件
-    for (const toolCall of functionCalls) {
+    for (const toolCall of executionPlan.calls) {
       const toolDef = executionPipeline.getRegistry().get(toolCall.function.name);
       const toolKind = toolDef?.kind as 'readonly' | 'write' | 'execute' | undefined;
       yield { type: 'tool_start', toolCall, toolKind };
@@ -370,12 +345,17 @@ export async function* agentLoop(
       return buildAbortResult(turnsCount, allToolResults.length, startTime);
     }
 
-    // 并行执行工具
-    const executionResults = await Promise.all(
-      functionCalls.map((toolCall) =>
-        executeToolCall(toolCall, executionPipeline, executionContext, config, signal)
-      )
-    );
+    const executionResults = await executeToolCalls({
+      plan: executionPlan,
+      executionPipeline,
+      executionContext,
+      logger: config.logger,
+      permissionMode: config.permissionMode,
+      signal,
+      hooks: {
+        onBeforeToolExec: config.onBeforeToolExec,
+      },
+    });
 
     // 处理结果
     for (const { toolCall, result, toolUseUuid } of executionResults) {
@@ -435,15 +415,22 @@ export async function* agentLoop(
 
     // 11. 检查轮次上限
     if (turnsCount >= effectiveMaxTurns && !isYoloMode) {
-      const limitResult = await handleTurnLimit(
-        config, messages, turnsCount, allToolResults.length,
-        startTime, totalTokens, lastPromptTokens
-      );
-      if (limitResult.action === 'stop') {
+      const limitDecision = await decideTurnLimit({
+        maxTurns: config.maxTurns,
+        turnsCount,
+        messages,
+        toolCallsCount: allToolResults.length,
+        startTime,
+        totalTokens,
+        onTurnLimitReached: config.onTurnLimitReached,
+        onTurnLimitCompact: config.onTurnLimitCompact,
+      });
+      if (limitDecision.action === 'stop') {
         yield { type: 'agent_end' };
-        return limitResult.result;
+        return limitDecision.result;
       }
-      // action === 'continue': 重置轮次
+
+      applyCompactionDecision(messages, limitDecision.compactedMessages, limitDecision.continueMessage);
       turnsCount = 0;
       continue;
     }
@@ -471,157 +458,22 @@ function buildAbortResult(
   };
 }
 
-/**
- * 执行单个工具调用
- */
-async function executeToolCall(
-  toolCall: FunctionToolCall,
-  executionPipeline: ExecutionPipeline,
-  executionContext: AgentLoopConfig['executionContext'],
-  config: AgentLoopConfig,
-  signal?: AbortSignal
-): Promise<{
-  toolCall: FunctionToolCall;
-  result: ToolResult;
-  toolUseUuid: string | null;
-}> {
-  try {
-    const params = JSON.parse(toolCall.function.arguments);
-
-    // 智能修复: Task 工具的 subagent_session_id
-    if (
-      toolCall.function.name === 'Task' &&
-      (typeof params.subagent_session_id !== 'string' ||
-        params.subagent_session_id.length === 0)
-    ) {
-      const { nanoid } = await import('nanoid');
-      params.subagent_session_id =
-        typeof params.resume === 'string' && params.resume.length > 0
-          ? params.resume
-          : nanoid();
-    }
-
-    // 智能修复: todos 参数字符串化
-    if (params.todos && typeof params.todos === 'string') {
-      try {
-        params.todos = JSON.parse(params.todos);
-      } catch {
-        // 由验证层处理
-      }
-    }
-
-    // Before-tool hook（保存 tool_use 到 JSONL）
-    const toolUseUuid = await config.onBeforeToolExec?.({
-      toolCall,
-      params,
-    }) ?? null;
-
-    // 执行工具
-    const result = await executionPipeline.execute(
-      toolCall.function.name,
-      params,
-      {
-        sessionId: executionContext.sessionId,
-        userId: executionContext.userId,
-        workspaceRoot: executionContext.workspaceRoot,
-        signal,
-        confirmationHandler: executionContext.confirmationHandler,
-        permissionMode: config.permissionMode,
-      }
-    );
-
-    return { toolCall, result, toolUseUuid };
-  } catch (error) {
-    logger.error(`Tool execution failed for ${toolCall.function.name}:`, error);
-    return {
-      toolCall,
-      result: {
-        success: false,
-        llmContent: '',
-        displayContent: '',
-        error: {
-          type: ToolErrorType.EXECUTION_ERROR,
-          message: error instanceof Error ? error.message : 'Unknown error',
-        },
-      },
-      toolUseUuid: null,
-    };
-  }
-}
-
-/**
- * 处理轮次上限
- */
-async function handleTurnLimit(
-  config: AgentLoopConfig,
+function applyCompactionDecision(
   messages: Message[],
-  turnsCount: number,
-  toolCallsCount: number,
-  startTime: number,
-  totalTokens: number,
-  _lastPromptTokens?: number
-): Promise<{ action: 'stop' | 'continue'; result: LoopResult }> {
-  if (config.onTurnLimitReached) {
-    const response = await config.onTurnLimitReached({ turnsCount });
-
-    if (response?.continue) {
-      // 用户选择继续，尝试 compaction
-      if (config.onTurnLimitCompact) {
-        const compactResult = await config.onTurnLimitCompact({
-          messages,
-          contextMessages: messages.filter((m) => m.role !== 'system'),
-        });
-
-        if (compactResult.success && compactResult.compactedMessages) {
-          // 重建 messages
-          const systemMsg = messages.find((m) => m.role === 'system');
-          messages.length = 0;
-          if (systemMsg) messages.push(systemMsg);
-          messages.push(...compactResult.compactedMessages);
-          if (compactResult.continueMessage) {
-            messages.push(compactResult.continueMessage);
-          }
-        }
-      }
-
-      return {
-        action: 'continue',
-        result: { success: true, metadata: { turnsCount, toolCallsCount, duration: Date.now() - startTime } },
-      };
-    }
-
-    // 用户选择停止
-    return {
-      action: 'stop',
-      result: {
-        success: true,
-        metadata: {
-          turnsCount,
-          toolCallsCount,
-          duration: Date.now() - startTime,
-          tokensUsed: totalTokens,
-          configuredMaxTurns: config.maxTurns,
-          actualMaxTurns: config.maxTurns,
-        },
-      },
-    };
+  compactedMessages?: Message[],
+  continueMessage?: Message,
+): void {
+  if (!compactedMessages) {
+    return;
   }
 
-  // 非交互模式：直接停止
-  return {
-    action: 'stop',
-    result: {
-      success: false,
-      error: {
-        type: 'max_turns_exceeded',
-        message: `达到最大轮次限制 (${config.maxTurns})`,
-      },
-      metadata: {
-        turnsCount,
-        toolCallsCount,
-        duration: Date.now() - startTime,
-        tokensUsed: totalTokens,
-      },
-    },
-  };
+  const systemMsg = messages.find((message) => message.role === 'system');
+  messages.length = 0;
+  if (systemMsg) {
+    messages.push(systemMsg);
+  }
+  messages.push(...compactedMessages);
+  if (continueMessage) {
+    messages.push(continueMessage);
+  }
 }

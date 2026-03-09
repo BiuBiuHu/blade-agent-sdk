@@ -4,7 +4,8 @@
  * 从 Agent.ts 拆分，职责单一：管理模型生命周期
  */
 
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { ContextManager } from '../context/ContextManager.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../logging/Logger.js';
 import {
   createChatServiceAsync,
   type IChatService,
@@ -15,20 +16,24 @@ import type {
   OutputFormat,
 } from '../types/common.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
-import { ExecutionEngine } from './ExecutionEngine.js';
-
-const logger = createLogger(LogCategory.AGENT);
 
 export class ModelManager {
   private chatService!: IChatService;
-  private executionEngine!: ExecutionEngine;
   private currentModelId?: string;
   private currentModelMaxContextTokens!: number;
+  private readonly contextManager: ContextManager;
+  private readonly logger: InternalLogger;
 
   constructor(
     private config: BladeConfig,
     private outputFormat?: OutputFormat,
-  ) {}
+    contextManager?: ContextManager,
+    projectPath?: string,
+    logger?: InternalLogger,
+  ) {
+    this.contextManager = contextManager || new ContextManager({ projectPath });
+    this.logger = (logger ?? NOOP_LOGGER).child(LogCategory.AGENT);
+  }
 
   // ===== Getters =====
 
@@ -36,8 +41,8 @@ export class ModelManager {
     return this.chatService;
   }
 
-  getExecutionEngine(): ExecutionEngine {
-    return this.executionEngine;
+  getContextManager(): ContextManager {
+    return this.contextManager;
   }
 
   getCurrentModelId(): string | undefined {
@@ -66,15 +71,15 @@ export class ModelManager {
   // ===== 模型应用 =====
 
   async applyModelConfig(modelConfig: ModelConfig, label: string): Promise<void> {
-    logger.debug(`[ModelManager] ${label} ${modelConfig.name} (${modelConfig.model})`);
+    this.logger.debug(`[ModelManager] ${label} ${modelConfig.name} (${modelConfig.model})`);
 
     const modelSupportsThinking = isThinkingModel(modelConfig);
     const thinkingModeEnabled = modelConfig.thinkingEnabled ?? false;
     const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
     if (modelSupportsThinking && !thinkingModeEnabled) {
-      logger.debug(`[ModelManager] 🧠 模型支持 Thinking，但用户未开启（按 Tab 开启）`);
+      this.logger.debug(`[ModelManager] 🧠 模型支持 Thinking，但用户未开启（按 Tab 开启）`);
     } else if (supportsThinking) {
-      logger.debug(`[ModelManager] 🧠 Thinking 模式已启用，启用 reasoning_content 支持`);
+      this.logger.debug(`[ModelManager] 🧠 Thinking 模式已启用，启用 reasoning_content 支持`);
     }
 
     const maxContextTokens = modelConfig.maxContextTokens ?? 128000;
@@ -91,9 +96,8 @@ export class ModelManager {
       outputFormat: this.outputFormat,
     });
 
-    const contextManager = this.executionEngine?.getContextManager();
-    this.executionEngine = new ExecutionEngine(this.chatService, contextManager);
     this.currentModelId = modelConfig.id;
+    this.config.currentModelId = modelConfig.id;
   }
 
   // ===== 模型切换 =====
@@ -103,9 +107,31 @@ export class ModelManager {
     const models = this.config.models || [];
     const modelConfig = models.find(m => m.id === modelId);
     if (!modelConfig) {
-      logger.warn(`[ModelManager] ⚠️ 模型配置未找到: ${modelId}`);
+      this.logger.warn(`[ModelManager] ⚠️ 模型配置未找到: ${modelId}`);
       return;
     }
     await this.applyModelConfig(modelConfig, '🔁 切换模型');
+  }
+
+  async setModel(model: string): Promise<void> {
+    const normalized = model.trim();
+    if (!normalized) return;
+
+    const models = this.config.models || [];
+    const matchedModel = models.find((candidate) =>
+      candidate.id === normalized
+      || candidate.model === normalized
+      || candidate.name === normalized,
+    );
+
+    if (matchedModel) {
+      await this.applyModelConfig(matchedModel, '🔁 切换模型');
+      return;
+    }
+
+    const activeModel = this.resolveModelConfig(this.currentModelId);
+    activeModel.model = normalized;
+    activeModel.name = normalized;
+    await this.applyModelConfig(activeModel, '🔁 更新模型');
   }
 }

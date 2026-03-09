@@ -7,13 +7,12 @@
  * 3. 使用 Promise 队列实现顺序执行
  */
 
-import { createLogger, LogCategory } from '../../logging/Logger.js';
-
-const logger = createLogger(LogCategory.EXECUTION);
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
 
 export class FileLockManager {
   // 全局单例实例
   private static instance: FileLockManager | null = null;
+  private logger: InternalLogger = NOOP_LOGGER.child(LogCategory.EXECUTION);
 
   // 文件锁映射: filePath -> Promise<void>
   private locks: Map<string, Promise<void>> = new Map();
@@ -24,11 +23,18 @@ export class FileLockManager {
   /**
    * 获取全局单例实例
    */
-  static getInstance(): FileLockManager {
+  static getInstance(logger?: InternalLogger): FileLockManager {
     if (!FileLockManager.instance) {
       FileLockManager.instance = new FileLockManager();
     }
+    if (logger) {
+      FileLockManager.instance.setLogger(logger);
+    }
     return FileLockManager.instance;
+  }
+
+  setLogger(logger: InternalLogger): void {
+    this.logger = logger.child(LogCategory.EXECUTION);
   }
 
   /**
@@ -66,13 +72,13 @@ export class FileLockManager {
     filePath: string,
     operation: () => Promise<T>
   ): Promise<T> {
-    logger.debug(`获取文件锁: ${filePath}`);
+    this.logger.debug(`获取文件锁: ${filePath}`);
     try {
       const result = await operation();
-      logger.debug(`释放文件锁: ${filePath}`);
+      this.logger.debug(`释放文件锁: ${filePath}`);
       return result;
     } catch (error) {
-      logger.debug(`操作失败，释放文件锁: ${filePath}`);
+      this.logger.debug(`操作失败，释放文件锁: ${filePath}`);
       throw error;
     }
   }

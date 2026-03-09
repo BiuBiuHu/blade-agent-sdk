@@ -1,38 +1,39 @@
 # Blade Agent SDK
 
-面向 Node.js 与 TypeScript 的多轮会话 Agent SDK，提供标准的 send/stream 会话模式、工具调用、会话恢复、文件检查点、沙箱执行与自动清理。
+面向 Node.js 与 TypeScript 的 session-first Agent SDK，提供多轮会话、工具调用、MCP、权限控制、Hooks、沙箱执行和结构化输出。
 
 ## 特性
 
-- 🔄 **多轮会话** - send/stream 模式，支持流式输出
-- 🔧 **工具调用** - 内置文件、命令行、MCP 等工具
-- 💾 **会话管理** - 恢复、分叉会话
-- 📁 **文件检查点** - 追踪文件变更，支持回滚
-- 🔒 **沙箱执行** - OS 级别安全隔离
-- 🔌 **MCP 集成** - 支持 Model Context Protocol
-- 🪝 **Hooks 系统** - 生命周期钩子，自定义行为
-- 🎯 **结构化输出** - 支持 JSON Schema 输出格式
-- 🤖 **自定义 Agent** - 定义专用子 Agent
+- 多轮会话：`send()` / `stream()` 分离，适合 CLI、IDE 和服务端集成
+- 会话持久化：支持 `resumeSession()` 和 `forkSession()`
+- 内置工具：文件、搜索、Shell、Web、Todo、Plan、MCP 资源工具
+- MCP：支持 stdio、SSE、HTTP 服务器，也支持 in-process MCP server
+- 权限控制：`permissionMode` + `canUseTool`
+- Hooks：在会话、权限和工具执行阶段注入自定义逻辑
+- 沙箱执行：通过 `sandbox` 配置约束命令执行
+- 结构化输出：支持 JSON Schema `outputFormat`
 
 ## 安装
 
 ```bash
 npm install @blade-ai/agent-sdk
-# 或
-pnpm add @blade-ai/agent-sdk
 ```
 
 ## 快速开始
 
-```typescript
+```ts
 import { createSession } from '@blade-ai/agent-sdk';
 
 const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
+  provider: {
+    type: 'openai-compatible',
+    apiKey: process.env.API_KEY,
+  },
   model: 'gpt-4o-mini',
 });
 
-await session.send('你好，你能帮我做什么？');
+await session.send('分析这个仓库的测试结构');
+
 for await (const msg of session.stream()) {
   if (msg.type === 'content') {
     process.stdout.write(msg.delta);
@@ -42,54 +43,66 @@ for await (const msg of session.stream()) {
 session.close();
 ```
 
-## 核心概念
+## 核心模型
 
-### Send/Stream 模式
+Blade Agent SDK 的主入口是 Session：
 
-Blade Agent SDK 使用 send/stream 分离模式：
+- `createSession(options)`：创建新会话
+- `resumeSession(options)`：恢复已有会话
+- `forkSession(options)`：从已有会话线性分叉
+- `prompt(message, options)`：一次性请求，内部使用临时会话
 
-```typescript
-// 1. 发送消息（非阻塞）
-await session.send('分析这段代码');
+### Send / Stream
 
-// 2. 流式接收响应
-for await (const msg of session.stream()) {
+```ts
+await session.send('检查最近的改动是否会影响 MCP 工具刷新');
+
+for await (const msg of session.stream({ includeThinking: true })) {
   switch (msg.type) {
+    case 'turn_start':
+      console.log(`turn ${msg.turn}`);
+      break;
     case 'content':
       process.stdout.write(msg.delta);
       break;
     case 'tool_use':
-      console.log(`调用工具: ${msg.name}`);
+      console.log(`\n[tool] ${msg.name}`);
       break;
     case 'tool_result':
-      console.log(`工具结果: ${msg.output}`);
+      console.log(`\n[result] ${msg.name}`);
       break;
     case 'result':
-      console.log('完成:', msg.subtype);
+      console.log(`\n[done] ${msg.subtype}`);
       break;
   }
 }
 ```
 
+约束：
+
+- 每次 `stream()` 之前必须先调用一次 `send()`
+- 同一时间只能有一个 pending message
+- `stream()` 会消费当前 pending message，并把结果写回会话历史
+
 ### 一次性 prompt
 
-```typescript
+```ts
 import { prompt } from '@blade-ai/agent-sdk';
 
-const result = await prompt('2+2 等于多少？', {
+const result = await prompt('总结这个项目的公开 API', {
   provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
   model: 'gpt-4o-mini',
 });
 
-console.log(result.result);       // 响应内容
-console.log(result.usage);        // Token 使用
-console.log(result.duration);     // 耗时（毫秒）
+console.log(result.result);
+console.log(result.toolCalls);
+console.log(result.usage);
 ```
 
-### 恢复会话
+### 恢复与分叉
 
-```typescript
-import { resumeSession } from '@blade-ai/agent-sdk';
+```ts
+import { forkSession, resumeSession } from '@blade-ai/agent-sdk';
 
 const session = await resumeSession({
   sessionId: 'existing-session-id',
@@ -97,94 +110,115 @@ const session = await resumeSession({
   model: 'gpt-4o-mini',
 });
 
-await session.send('继续上次的话题');
-```
-
-### 分叉会话
-
-从现有会话创建分支，保留历史但独立演进：
-
-```typescript
-import { forkSession } from '@blade-ai/agent-sdk';
-
-// 方式1: 从 Session 实例分叉
-const forkedSession = await session.fork();
-
-// 方式2: 从特定消息点分叉
-const forkedSession2 = await session.fork({ messageId: 'msg-uuid-123' });
-
-// 方式3: 从已存储的会话 ID 分叉
-const forkedSession3 = await forkSession({
+const forked = await forkSession({
   sessionId: 'existing-session-id',
-  messageId: 'msg-uuid-456',
+  messageId: 'msg-123',
   provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
   model: 'gpt-4o-mini',
 });
 ```
 
-### 自动清理
+## 配置 Session
 
-TypeScript 5.2+ 支持 `using` 自动清理：
+```ts
+import { PermissionMode, type SessionOptions } from '@blade-ai/agent-sdk';
 
-```typescript
-await using session = await createSession({ provider, model });
-// 作用域结束时自动关闭会话
+const options: SessionOptions = {
+  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
+  model: 'gpt-4o-mini',
+  systemPrompt: 'You are a careful coding agent.',
+  maxTurns: 12,
+  permissionMode: PermissionMode.DEFAULT,
+  allowedTools: ['Read', 'Edit', 'Write', 'Bash'],
+  cwd: process.cwd(),
+  env: { CI: '1' },
+};
 ```
 
-## 文件检查点
+常用字段：
 
-启用文件检查点功能，追踪 Agent 对文件的修改，支持回滚：
+- `provider` / `model`：模型接入配置
+- `systemPrompt`：会话级系统提示
+- `allowedTools` / `disallowedTools` / `tools`：工具集控制
+- `mcpServers`：MCP server 配置
+- `permissionMode` / `canUseTool`：权限控制
+- `hooks`：会话/工具/权限阶段回调
+- `sandbox`：命令执行沙箱
+- `outputFormat`：JSON Schema 结构化输出
+- `agents`：命名子代理定义
+- `logger`：结构化日志回调
 
-```typescript
+## Hooks
+
+当前 `SessionOptions.hooks` 支持这些事件：
+
+- `HookEvent.SessionStart`
+- `HookEvent.SessionEnd`
+- `HookEvent.UserPromptSubmit`
+- `HookEvent.PermissionRequest`
+- `HookEvent.PreToolUse`
+- `HookEvent.PostToolUse`
+- `HookEvent.PostToolUseFailure`
+- `HookEvent.TaskCompleted`
+
+```ts
+import { createSession, HookEvent } from '@blade-ai/agent-sdk';
+
 const session = await createSession({
   provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
   model: 'gpt-4o-mini',
-  enableFileCheckpointing: true,
-});
-
-// Agent 执行文件操作
-await session.send('请帮我重构 src/utils.ts 文件');
-
-// 不满意时回滚到指定消息点
-const result = await session.rewindFiles('user-message-uuid');
-if (result.success) {
-  console.log('已恢复文件:', result.restoredFiles);
-  console.log('已删除文件:', result.deletedFiles);
-}
-
-// 查看检查点统计
-const stats = session.getCheckpointStatistics();
-console.log('检查点数量:', stats?.checkpointCount);
-```
-
-## 沙箱执行
-
-启用沙箱功能，在安全隔离环境中执行命令：
-
-```typescript
-const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
-  model: 'gpt-4o-mini',
-  sandbox: {
-    enabled: true,
-    autoAllowBashIfSandboxed: true,
-    allowUnsandboxedCommands: ['git', 'npm'],
-    network: {
-      allowLocalBinding: true,
-    },
+  hooks: {
+    [HookEvent.PreToolUse]: [
+      async (input) => {
+        if (input.toolName === 'Bash' && String(input.toolInput).includes('rm -rf')) {
+          return { action: 'abort', reason: 'Dangerous command blocked' };
+        }
+        return { action: 'continue' };
+      },
+    ],
+    [HookEvent.PostToolUse]: [
+      async (input) => ({
+        action: 'continue',
+        modifiedOutput: {
+          ...((input.toolOutput as Record<string, unknown>) || {}),
+          audited: true,
+        },
+      }),
+    ],
   },
 });
 ```
 
-**支持的沙箱技术：**
-- **Linux**: Bubblewrap (bwrap)
-- **macOS**: Seatbelt (sandbox-exec)
+## 权限控制
 
-## MCP 集成
+```ts
+import { createSession, PermissionMode, type CanUseTool } from '@blade-ai/agent-sdk';
 
-连接 MCP (Model Context Protocol) 服务器：
+const canUseTool: CanUseTool = async (toolName, input, options) => {
+  if (options.toolKind === 'readonly') {
+    return { behavior: 'allow' };
+  }
 
-```typescript
+  if (toolName === 'Bash' && String(input.command || '').includes('rm -rf')) {
+    return { behavior: 'deny', message: 'Dangerous command blocked' };
+  }
+
+  return { behavior: 'ask' };
+};
+
+const session = await createSession({
+  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
+  model: 'gpt-4o-mini',
+  permissionMode: PermissionMode.DEFAULT,
+  canUseTool,
+});
+```
+
+## MCP
+
+### 连接外部 MCP 服务器
+
+```ts
 const session = await createSession({
   provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
   model: 'gpt-4o-mini',
@@ -192,169 +226,95 @@ const session = await createSession({
     filesystem: {
       type: 'stdio',
       command: 'npx',
-      args: ['-y', '@anthropic-ai/mcp-server-filesystem', '/path/to/workspace'],
-    },
-    github: {
-      type: 'stdio',
-      command: 'npx',
-      args: ['-y', '@anthropic-ai/mcp-server-github'],
-      env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN },
+      args: ['-y', '@anthropic-ai/mcp-server-filesystem', process.cwd()],
     },
   },
 });
 
-// 查看 MCP 服务器状态
-const status = await session.mcpServerStatus();
-
-// 列出可用的 MCP 工具
-const tools = await session.mcpListTools();
+console.log(await session.mcpServerStatus());
+console.log(await session.mcpListTools());
 ```
 
-## 权限控制
+### 定义 in-process MCP server
 
-使用 `canUseTool` 回调控制工具权限：
+```ts
+import { createSdkMcpServer, tool } from '@blade-ai/agent-sdk';
+import { z } from 'zod';
 
-```typescript
-const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
-  model: 'gpt-4o-mini',
-  canUseTool: async (toolName, input, options) => {
-    // 只读工具自动批准
-    if (options.toolKind === 'readonly') {
-      return { behavior: 'allow' };
-    }
-    
-    // 危险命令拒绝
-    if (toolName === 'Bash' && input.command?.includes('rm -rf')) {
-      return { behavior: 'deny', message: '禁止危险命令' };
-    }
-    
-    // 其他情况询问用户
-    return { behavior: 'ask' };
-  },
+const greet = tool(
+  'greet',
+  'Greet a user by name',
+  { name: z.string() },
+  async ({ name }) => ({
+    content: [{ type: 'text', text: `Hello, ${name}!` }],
+  }),
+);
+
+const greetServer = await createSdkMcpServer({
+  name: 'greetings',
+  version: '1.0.0',
+  tools: [greet],
 });
 ```
 
-## Hooks 系统
+## 沙箱
 
-在 Agent 生命周期的特定点注入自定义逻辑：
-
-```typescript
+```ts
 const session = await createSession({
   provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
   model: 'gpt-4o-mini',
-  hooks: {
+  sandbox: {
     enabled: true,
-    PreToolUse: [
-      {
-        matcher: 'Bash',
-        hooks: [
-          {
-            type: 'command',
-            command: './scripts/validate-bash.sh',
-            timeout: 10,
-          },
-        ],
-      },
-    ],
+    autoAllowBashIfSandboxed: true,
+    excludedCommands: ['sudo'],
+    network: {
+      allowLocalBinding: true,
+    },
   },
 });
 ```
 
 ## 自定义工具
 
-```typescript
-import { z } from 'zod';
+```ts
+import { defineTool } from '@blade-ai/agent-sdk';
 
-const customTool = {
-  name: 'MyTool',
-  description: '自定义工具',
-  inputSchema: z.object({
-    query: z.string().describe('要处理的查询')
-  }),
-  execute: async (input, context) => {
-    return `处理结果: ${input.query}`;
-  }
-};
-
-const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
-  model: 'gpt-4o-mini',
-  tools: [customTool],
-});
-```
-
-## 自定义 Agent
-
-```typescript
-const searchAgent = {
-  name: 'search',
-  description: '搜索代码库中的信息',
-  systemPrompt: '你是一个代码搜索专家',
-  tools: ['Read', 'Grep', 'Glob'],
-};
-
-const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
-  model: 'gpt-4o-mini',
-  agents: [searchAgent],
-});
-```
-
-## 结构化输出
-
-```typescript
-import { z } from 'zod';
-
-const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
-  model: 'gpt-4o-mini',
-  outputFormat: {
-    type: 'json_schema',
-    schema: z.object({
-      summary: z.string(),
-      confidence: z.number().min(0).max(1),
-    }),
-    name: 'AnalysisResult',
-    strict: true,
+const echoTool = defineTool({
+  name: 'Echo',
+  description: 'Echoes text back to the model',
+  parameters: {
+    type: 'object',
+    properties: {
+      text: { type: 'string', description: 'Text to echo' },
+    },
+    required: ['text'],
   },
+  execute: async (params) => ({
+    success: true,
+    llmContent: String(params.text),
+    displayContent: String(params.text),
+  }),
 });
 ```
 
-## 主要类型
+## 日志
 
-```typescript
-import type {
-  ISession,
-  SessionOptions,
-  StreamMessage,
-  PromptResult,
-  ForkOptions,
-  ForkSessionOptions,
-  RewindResult,
-  SandboxSettings,
-  McpServerConfig,
-  ToolDefinition,
-  AgentDefinition,
-} from '@blade-ai/agent-sdk';
+SDK 不自带日志实现。你只需要实现 `AgentLogger` 接口：
+
+```ts
+import type { AgentLogger, LogEntry } from '@blade-ai/agent-sdk';
+
+const logger: AgentLogger = {
+  log(entry: LogEntry) {
+    console.log(entry.level, entry.category, entry.message, entry.args);
+  },
+};
 ```
 
 ## 文档
 
-- [API 参考](./docs/blade-agent-sdk.md) - 完整 API 文档
-- [会话管理](./docs/session.md) - 会话 API 完整指南
-- [文件检查点](./docs/checkpoint.md) - 文件变更追踪与回滚
-- [沙箱功能](./docs/sandbox.md) - 安全隔离执行
-- [MCP 集成](./docs/mcp.md) - Model Context Protocol 集成
-- [Hooks 系统](./docs/hooks.md) - 生命周期钩子详解
-
-## 运行环境
-
-- Node.js >= 20
-- TypeScript >= 5.2（可选，用于 `using` 自动清理）
-- Linux: Bubblewrap（可选，用于沙箱）
-- macOS: 内置 Seatbelt 支持
-
-## 许可证
-
-MIT
+- [总览](./docs/blade-agent-sdk.md)
+- [Session](./docs/session.md)
+- [Hooks](./docs/hooks.md)
+- [MCP](./docs/mcp.md)
+- [Sandbox](./docs/sandbox.md)

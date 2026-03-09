@@ -8,17 +8,15 @@
  */
 
 import { nanoid } from 'nanoid';
-import type { BladeConfig, PermissionMode } from '../../types/common.js';
-import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
+import type { BladeConfig, PermissionMode } from '../../types/common.js';
 import { Agent } from '../Agent.js';
 import {
   type AgentSession,
   AgentSessionStore,
 } from './AgentSessionStore.js';
 import type { SubagentConfig, SubagentResult } from './types.js';
-
-const logger = createLogger(LogCategory.AGENT);
 
 /**
  * 后台 Agent 运行时信息
@@ -71,6 +69,7 @@ export interface StartBackgroundAgentOptions {
  */
 export class BackgroundAgentManager {
   private static instance: BackgroundAgentManager | null = null;
+  private logger: InternalLogger = NOOP_LOGGER.child(LogCategory.AGENT);
 
   // 运行中的 agent
   private runningAgents = new Map<string, BackgroundAgentRuntime>();
@@ -82,11 +81,19 @@ export class BackgroundAgentManager {
     this.cleanupOrphanedSessions();
   }
 
-  static getInstance(): BackgroundAgentManager {
+  static getInstance(logger?: InternalLogger): BackgroundAgentManager {
     if (!BackgroundAgentManager.instance) {
       BackgroundAgentManager.instance = new BackgroundAgentManager();
     }
+    if (logger) {
+      BackgroundAgentManager.instance.setLogger(logger);
+    }
     return BackgroundAgentManager.instance;
+  }
+
+  setLogger(logger: InternalLogger): void {
+    this.logger = logger.child(LogCategory.AGENT);
+    this.sessionStore = AgentSessionStore.getInstance(this.logger);
   }
 
   private cleanupOrphanedSessions(): void {
@@ -100,7 +107,7 @@ export class BackgroundAgentManager {
         const age = now - session.lastActiveAt;
 
         if (!isInMemory || age > maxOrphanAge) {
-          logger.warn(`Cleaning up orphaned agent session: ${session.id}`);
+          this.logger.warn(`Cleaning up orphaned agent session: ${session.id}`);
           this.sessionStore.updateSession(session.id, {
             status: 'failed',
             result: {
@@ -178,7 +185,7 @@ export class BackgroundAgentManager {
       this.runningAgents.delete(id);
     });
 
-    logger.info(`Background agent started: ${id} (${config.name})`);
+    this.logger.info(`Background agent started: ${id} (${config.name})`);
     return id;
   }
 
@@ -262,7 +269,7 @@ export class BackgroundAgentManager {
         result.stats
       );
 
-      logger.info(`Background agent completed: ${agentId} (success=${result.success})`);
+      this.logger.info(`Background agent completed: ${agentId} (success=${result.success})`);
       return result;
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -278,7 +285,7 @@ export class BackgroundAgentManager {
         { duration }
       );
 
-      logger.warn(`Background agent failed: ${agentId}`, error);
+      this.logger.warn(`Background agent failed: ${agentId}`, error);
 
       return {
         success: false,
@@ -361,12 +368,12 @@ export class BackgroundAgentManager {
     const session = this.sessionStore.loadSession(agentId);
 
     if (!session) {
-      logger.warn(`Cannot resume agent ${agentId}: session not found`);
+      this.logger.warn(`Cannot resume agent ${agentId}: session not found`);
       return undefined;
     }
 
     if (this.isRunning(agentId)) {
-      logger.warn(`Cannot resume agent ${agentId}: still running`);
+      this.logger.warn(`Cannot resume agent ${agentId}: still running`);
       return undefined;
     }
 
@@ -404,7 +411,7 @@ export class BackgroundAgentManager {
     // 更新状态
     this.sessionStore.updateSession(agentId, { status: 'cancelled' });
 
-    logger.info(`Background agent cancelled: ${agentId}`);
+    this.logger.info(`Background agent cancelled: ${agentId}`);
     return true;
   }
 
