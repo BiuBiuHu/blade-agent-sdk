@@ -2,6 +2,9 @@
 
 本文件记录 @blade-ai/agent-sdk 的所有重要变更。
 
+## [0.1.17] - 2026-03-12
+
+- f3eb08c fix: 移除对 process.cwd() 的隐式依赖，增强文件系统访问安全性
 ## [0.1.16] - 2026-03-12
 
 - c17e79b feat: 重构运行时上下文管理，引入ContextSnapshot机制
