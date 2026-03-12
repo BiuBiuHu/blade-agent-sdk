@@ -74,8 +74,8 @@ export interface ExecutionContext {
   bladeConfig?: BladeConfig;
 }
 
-export function getEffectiveProjectDir(context: ExecutionContext): string {
-  return context.contextSnapshot?.cwd || process.cwd();
+export function getEffectiveProjectDir(context: ExecutionContext): string | undefined {
+  return context.contextSnapshot?.cwd;
 }
 
 interface ToolExecutionInternalState {

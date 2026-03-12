@@ -43,6 +43,9 @@ export class HookStage implements PipelineStage {
       execution._internal.hookToolUseId = toolUseId;
 
       const projectDir = getEffectiveProjectDir(execution.context);
+      if (!projectDir) {
+        return;
+      }
 
       const result = await this.hookManager.executePreToolHooks(
         tool.name,

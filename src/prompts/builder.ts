@@ -84,7 +84,7 @@ export interface BuildSystemPromptResult {
  *
  * @example
  * // 普通模式
- * const { prompt } = await buildSystemPrompt({ projectPath: process.cwd() });
+ * const { prompt } = await buildSystemPrompt({ projectPath: '/my/project' });
  *
  * // Plan 模式
  * const { prompt } = await buildSystemPrompt({ mode: PermissionMode.PLAN });
@@ -112,7 +112,7 @@ export async function buildSystemPrompt(
 
   // 1. 环境上下文（始终在最前面）
   if (includeEnvironment) {
-    const envContext = getEnvironmentContext();
+    const envContext = getEnvironmentContext(projectPath);
     if (envContext) {
       parts.push(envContext);
       sources.push({ name: 'environment', loaded: true, length: envContext.length });

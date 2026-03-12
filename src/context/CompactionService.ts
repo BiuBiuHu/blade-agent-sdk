@@ -38,6 +38,8 @@ export interface CompactionOptions {
   sessionId?: string;
   /** 权限模式（用于 hooks） */
   permissionMode?: PermissionMode;
+  /** 当前 turn 的项目目录（用于 hooks） */
+  projectDir?: string;
 }
 
 /**
@@ -98,10 +100,11 @@ export class CompactionService {
 
     // 执行 Compaction Hook（压缩前）
     // Hook 可以阻止压缩
-    try {
+    if (options.projectDir) {
+      try {
       const hookManager = HookManager.getInstance();
       const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
-        projectDir: process.cwd(),
+        projectDir: options.projectDir,
         sessionId: options.sessionId || 'unknown',
         permissionMode: options.permissionMode || PermissionMode.DEFAULT,
         messagesBefore: messages.length,
@@ -132,9 +135,10 @@ export class CompactionService {
           `[CompactionService] Compaction hook warning: ${hookResult.warning}`
         );
       }
-    } catch (hookError) {
-      // Hook 执行失败不应阻止压缩
-      console.warn('[CompactionService] Compaction hook execution failed:', hookError);
+      } catch (hookError) {
+        // Hook 执行失败不应阻止压缩
+        console.warn('[CompactionService] Compaction hook execution failed:', hookError);
+      }
     }
 
     try {

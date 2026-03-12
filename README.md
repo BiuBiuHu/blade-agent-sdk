@@ -130,8 +130,15 @@ const options: SessionOptions = {
   maxTurns: 12,
   permissionMode: PermissionMode.DEFAULT,
   allowedTools: ['Read', 'Edit', 'Write', 'Bash'],
-  cwd: process.cwd(),
-  env: { CI: '1' },
+  defaultContext: {
+    capabilities: {
+      filesystem: {
+        roots: ['/workspace/project'],
+        cwd: '/workspace/project',
+      },
+    },
+    environment: { CI: '1' },
+  },
 };
 ```
 
@@ -226,7 +233,7 @@ const session = await createSession({
     filesystem: {
       type: 'stdio',
       command: 'npx',
-      args: ['-y', '@anthropic-ai/mcp-server-filesystem', process.cwd()],
+      args: ['-y', '@anthropic-ai/mcp-server-filesystem', '/workspace/project'],
     },
   },
 });

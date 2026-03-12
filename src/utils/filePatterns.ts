@@ -190,13 +190,13 @@ export class FileFilter {
   static async create(options: FileFilterOptions = {}): Promise<FileFilter> {
     const inst = new FileFilter({ ...options, useGitignore: false });
     const {
-      cwd = process.cwd(),
+      cwd,
       useGitignore = true,
       gitignoreScanMode = 'root',
       customScanIgnore = [],
       cacheTTL,
     } = options;
-    if (useGitignore && gitignoreScanMode === 'recursive') {
+    if (cwd && useGitignore && gitignoreScanMode === 'recursive') {
       const ordered = await collectGitignoreRulesOrderedAsync(cwd, {
         scanIgnore: customScanIgnore,
         cacheTTL,
@@ -215,7 +215,7 @@ export class FileFilter {
 
   private initialize(options: FileFilterOptions): void {
     const {
-      cwd = process.cwd(),
+      cwd,
       useGitignore = true,
       useDefaults = true,
       customPatterns = [],
@@ -239,7 +239,7 @@ export class FileFilter {
       }
     }
 
-    if (useGitignore) {
+    if (useGitignore && cwd) {
       const rootGitignore = join(cwd, '.gitignore');
       const { patterns, negatePatterns } = _parseGitignore(rootGitignore);
       for (const p of patterns) {

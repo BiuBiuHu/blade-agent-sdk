@@ -216,6 +216,11 @@ export class ExecutionPipeline extends EventEmitter {
       };
 
       try {
+        const projectDir = getEffectiveProjectDir(execution.context);
+        if (!projectDir) {
+          return errorResult;
+        }
+
         const hookManager = HookManager.getInstance();
         const hookResult = await hookManager.executePostToolUseFailureHooks(
           execution.toolName,
@@ -223,7 +228,7 @@ export class ExecutionPipeline extends EventEmitter {
           execution.params,
           errorMsg,
           {
-            projectDir: getEffectiveProjectDir(execution.context),
+            projectDir,
             sessionId: execution.context.sessionId || 'unknown',
             permissionMode: execution.context.permissionMode ?? PermissionMode.DEFAULT,
             isInterrupt: false,

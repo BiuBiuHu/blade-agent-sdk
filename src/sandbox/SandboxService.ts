@@ -151,7 +151,7 @@ export class SandboxService {
     return parts[0] || '';
   }
 
-  wrapCommandForSandbox(command: string, workDir?: string): string {
+  wrapCommandForSandbox(command: string, workDir: string): string {
     if (!this.isEnabled()) {
       return command;
     }
@@ -161,8 +161,7 @@ export class SandboxService {
       return command;
     }
 
-    const effectiveWorkDir = workDir || process.cwd();
-    const options = executor.buildExecutionOptions(effectiveWorkDir, this.settings.network);
+    const options = executor.buildExecutionOptions(workDir, this.settings.network);
     return executor.wrapCommand(command, options);
   }
 

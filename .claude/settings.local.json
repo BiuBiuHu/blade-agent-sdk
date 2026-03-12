@@ -7,7 +7,8 @@
       "WebFetch(domain:www.anthropic.com)",
       "WebFetch(domain:hyperskill.org)",
       "WebFetch(domain:readmedium.com)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(grep -rn \"CLAUDE\\\\|claude\\\\|git\\\\|skill\\\\|command\\\\|bash\\\\|file\\\\|path\\\\|cwd\\\\|workspace\" src/prompts/ src/skills/ src/commands/ --include=\"*.ts\" -l 2>/dev/null | head -20)"
     ]
   }
 }

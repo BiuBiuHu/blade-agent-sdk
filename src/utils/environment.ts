@@ -3,17 +3,16 @@ import * as os from 'os';
 import * as path from 'path';
 
 export interface EnvironmentInfo {
-  workingDirectory: string;
-  projectRoot: string;
+  workingDirectory?: string;
+  projectRoot?: string;
   platform: string;
   nodeVersion: string;
   currentDate: string;
   homeDirectory: string;
 }
 
-export function getEnvironmentInfo(): EnvironmentInfo {
-  const workingDir = process.cwd();
-  const projectRoot = findProjectRoot(workingDir);
+export function getEnvironmentInfo(workingDir?: string): EnvironmentInfo {
+  const projectRoot = workingDir ? findProjectRoot(workingDir) : undefined;
 
   return {
     workingDirectory: workingDir,
@@ -25,28 +24,36 @@ export function getEnvironmentInfo(): EnvironmentInfo {
   };
 }
 
-export function getEnvironmentContext(): string {
-  const env = getEnvironmentInfo();
-
-  return `# Environment Context
-
-## Working Directory
+export function getEnvironmentContext(workingDir?: string): string {
+  const env = getEnvironmentInfo(workingDir);
+  const workingDirectorySection = env.workingDirectory
+    ? `## Working Directory
 **Current**: \`${env.workingDirectory}\`
 **Project Root**: \`${env.projectRoot}\`
 
-## System Information
-- **Platform**: ${env.platform}
-- **Node.js**: ${env.nodeVersion}
-- **Date**: ${env.currentDate}
-
-## File Path Guidelines
+`
+    : '';
+  const fileGuidance = env.workingDirectory
+    ? `## File Path Guidelines
 When using file tools (read, write, edit), provide **absolute paths**:
 - ✅ Correct: \`${env.workingDirectory}/package.json\`
 - ✅ Correct: \`${env.workingDirectory}/src/index.ts\`
 - ❌ Incorrect: \`/package.json\` (root directory)
 - ❌ Incorrect: \`package.json\` (relative path without context)
 
-**Always use** \`${env.workingDirectory}/\` as the base for file paths.`;
+**Always use** \`${env.workingDirectory}/\` as the base for file paths.`
+    : `## File Path Guidelines
+When using file tools (read, write, edit), provide **absolute paths** anchored to the active filesystem context.`;
+
+  return `# Environment Context
+
+${workingDirectorySection}## System Information
+
+- **Platform**: ${env.platform}
+- **Node.js**: ${env.nodeVersion}
+- **Date**: ${env.currentDate}
+
+${fileGuidance}`;
 }
 
 function findProjectRoot(startDir: string): string {
@@ -75,9 +82,12 @@ function existsSync(filePath: string): boolean {
 }
 
 export function getDirectoryStructure(
-  dir: string = process.cwd(),
+  dir?: string,
   maxDepth: number = 2
 ): string {
+  if (!dir) {
+    return '.';
+  }
   try {
     const command = `find "${dir}" -maxdepth ${maxDepth} -type d -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" | head -30`;
     const output = execSync(command, {

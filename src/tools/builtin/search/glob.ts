@@ -108,7 +108,18 @@ export const globTool = createTool({
         };
       }
 
-      const searchRoot = path ?? context.contextSnapshot?.cwd ?? process.cwd();
+      const searchRoot = path ?? context.contextSnapshot?.cwd;
+      if (!searchRoot) {
+        return {
+          success: false,
+          llmContent: 'No search path provided and no filesystem working directory is available.',
+          displayContent: '❌ 未提供搜索路径，且当前上下文没有可用的工作目录',
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: 'No search path available',
+          },
+        };
+      }
 
       updateOutput?.(`Searching in ${searchRoot} for pattern "${pattern}"...`);
 

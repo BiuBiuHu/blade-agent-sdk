@@ -125,14 +125,18 @@ export class HookManager {
   /**
    * 重新加载配置（直接从配置文件读取）
    */
-  async reloadConfig(): Promise<void> {
+  async reloadConfig(projectDir?: string): Promise<void> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
+
+    if (!projectDir) {
+      return;
+    }
 
     try {
       // 读取本地 settings 文件
       const localSettingsPath = path.join(
-        process.cwd(),
+        projectDir,
         '.blade',
         'settings.local.json'
       );

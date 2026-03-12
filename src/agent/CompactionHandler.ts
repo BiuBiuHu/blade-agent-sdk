@@ -66,6 +66,7 @@ export class CompactionHandler {
         baseURL: chatConfig.baseUrl,
         customHeaders: chatConfig.customHeaders,
         actualPreTokens: actualPromptTokens,
+        projectDir: context.snapshot?.cwd,
       });
 
       if (result.success) {
@@ -130,6 +131,7 @@ export class CompactionHandler {
         baseURL: chatConfig.baseUrl,
         customHeaders: chatConfig.customHeaders,
         actualPreTokens: lastPromptTokens,
+        projectDir: context.snapshot?.cwd,
       });
 
       context.messages = compactResult.compactedMessages;

@@ -21,16 +21,18 @@ import type {
   SkillRegistryConfig,
 } from './types.js';
 
+type ResolvedSkillRegistryConfig =
+  Omit<Required<SkillRegistryConfig>, 'cwd'> & { cwd?: string };
+
 /**
  * 默认配置
  */
-const DEFAULT_CONFIG: Required<SkillRegistryConfig> = {
+const DEFAULT_CONFIG: ResolvedSkillRegistryConfig = {
   userSkillsDir: path.join(homedir(), '.blade', 'skills'),
   projectSkillsDir: '.blade/skills',
   // Claude Code 兼容路径
   claudeUserSkillsDir: path.join(homedir(), '.claude', 'skills'),
   claudeProjectSkillsDir: '.claude/skills',
-  cwd: process.cwd(),
 };
 
 /**
@@ -43,7 +45,7 @@ let instance: SkillRegistry | null = null;
  */
 export class SkillRegistry {
   private skills: Map<string, SkillMetadata> = new Map();
-  private config: Required<SkillRegistryConfig>;
+  private config: ResolvedSkillRegistryConfig;
   private initialized = false;
 
   constructor(config?: SkillRegistryConfig) {
@@ -120,20 +122,22 @@ export class SkillRegistry {
     errors.push(...userResult.errors);
 
     // 4. 扫描 Claude Code 项目级 skills（.claude/skills/）
-    const claudeProjectDir = path.isAbsolute(this.config.claudeProjectSkillsDir)
-      ? this.config.claudeProjectSkillsDir
-      : path.join(this.config.cwd, this.config.claudeProjectSkillsDir);
-    const claudeProjectResult = await this.scanDirectory(claudeProjectDir, 'project');
-    discoveredSkills.push(...claudeProjectResult.skills);
-    errors.push(...claudeProjectResult.errors);
+    if (this.config.cwd) {
+      const claudeProjectDir = path.isAbsolute(this.config.claudeProjectSkillsDir)
+        ? this.config.claudeProjectSkillsDir
+        : path.join(this.config.cwd, this.config.claudeProjectSkillsDir);
+      const claudeProjectResult = await this.scanDirectory(claudeProjectDir, 'project');
+      discoveredSkills.push(...claudeProjectResult.skills);
+      errors.push(...claudeProjectResult.errors);
 
-    // 5. 扫描 Blade 项目级 skills（.blade/skills/）- 优先级最高
-    const projectDir = path.isAbsolute(this.config.projectSkillsDir)
-      ? this.config.projectSkillsDir
-      : path.join(this.config.cwd, this.config.projectSkillsDir);
-    const projectResult = await this.scanDirectory(projectDir, 'project');
-    discoveredSkills.push(...projectResult.skills);
-    errors.push(...projectResult.errors);
+      // 5. 扫描 Blade 项目级 skills（.blade/skills/）- 优先级最高
+      const projectDir = path.isAbsolute(this.config.projectSkillsDir)
+        ? this.config.projectSkillsDir
+        : path.join(this.config.cwd, this.config.projectSkillsDir);
+      const projectResult = await this.scanDirectory(projectDir, 'project');
+      discoveredSkills.push(...projectResult.skills);
+      errors.push(...projectResult.errors);
+    }
 
     // 注册所有发现的 skills（后发现的覆盖先发现的）
     for (const skill of discoveredSkills) {

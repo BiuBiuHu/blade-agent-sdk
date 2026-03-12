@@ -285,9 +285,13 @@ export const taskTool = createTool({
       // 5. 执行 SubagentStop Hook
       // Hook 可以阻止 subagent 停止并请求继续执行
       try {
+        const projectDir = context.contextSnapshot?.cwd;
+        if (!projectDir) {
+          return buildTaskResult(result, subagent_type, description, duration, subagentSessionId);
+        }
         const hookManager = HookManager.getInstance();
         const stopResult = await hookManager.executeSubagentStopHooks(subagent_type, {
-          projectDir: context.contextSnapshot?.cwd || process.cwd(),
+          projectDir,
           sessionId: context.sessionId || 'unknown',
           permissionMode: context.permissionMode ?? PermissionMode.DEFAULT,
           taskDescription: description,
@@ -326,57 +330,7 @@ export const taskTool = createTool({
       }
 
       // 6. 返回结果
-      if (result.success) {
-        const outputPreview =
-          result.message.length > 1000
-            ? result.message.slice(0, 1000) + '\n...(截断)'
-            : result.message;
-
-        return {
-          success: true,
-          llmContent: result.message,
-          displayContent:
-            `✅ Subagent 任务完成\n\n` +
-            `类型: ${subagent_type}\n` +
-            `任务: ${description}\n` +
-            `Agent ID: ${result.agentId || 'N/A'}\n` +
-            `耗时: ${duration}ms\n` +
-            `工具调用: ${result.stats?.toolCalls || 0} 次\n` +
-            `Token: ${result.stats?.tokens || 0}\n\n` +
-            `结果:\n${outputPreview}`,
-          metadata: {
-            subagent_type,
-            description,
-            duration,
-            stats: result.stats,
-            subagentSessionId,
-            subagentType: subagent_type,
-            subagentStatus: 'completed' as const,
-            subagentSummary: result.message.slice(0, 500),
-          },
-        };
-      } else {
-        return {
-          success: false,
-          llmContent: `Subagent execution failed: ${result.error}`,
-          displayContent:
-            `⚠️ Subagent 任务失败\n\n` +
-            `类型: ${subagent_type}\n` +
-            `任务: ${description}\n` +
-            `Agent ID: ${result.agentId || 'N/A'}\n` +
-            `耗时: ${duration}ms\n` +
-            `错误: ${result.error}`,
-          error: {
-            type: ToolErrorType.EXECUTION_ERROR,
-            message: result.error || 'Unknown error',
-          },
-          metadata: {
-            subagentSessionId,
-            subagentType: subagent_type,
-            subagentStatus: 'failed' as const,
-          },
-        };
-      }
+      return buildTaskResult(result, subagent_type, description, duration, subagentSessionId);
     } catch (error) {
       const errorMessage = extractUserFriendlyError(
         error instanceof Error ? error : new Error(getErrorMessage(error))
@@ -402,6 +356,66 @@ export const taskTool = createTool({
   extractSignatureContent: (params) => `${params.subagent_type}:${params.description}`,
   abstractPermissionRule: () => '',
 });
+
+function buildTaskResult(
+  result: SubagentResult,
+  subagentType: string,
+  description: string,
+  duration: number,
+  subagentSessionId: string,
+): ToolResult {
+  if (result.success) {
+    const outputPreview =
+      result.message.length > 1000
+        ? result.message.slice(0, 1000) + '\n...(截断)'
+        : result.message;
+
+    return {
+      success: true,
+      llmContent: result.message,
+      displayContent:
+        `✅ Subagent 任务完成\n\n` +
+        `类型: ${subagentType}\n` +
+        `任务: ${description}\n` +
+        `Agent ID: ${result.agentId || 'N/A'}\n` +
+        `耗时: ${duration}ms\n` +
+        `工具调用: ${result.stats?.toolCalls || 0} 次\n` +
+        `Token: ${result.stats?.tokens || 0}\n\n` +
+        `结果:\n${outputPreview}`,
+      metadata: {
+        subagent_type: subagentType,
+        description,
+        duration,
+        stats: result.stats,
+        subagentSessionId,
+        subagentType,
+        subagentStatus: 'completed' as const,
+        subagentSummary: result.message.slice(0, 500),
+      },
+    };
+  }
+
+  return {
+    success: false,
+    llmContent: `Subagent execution failed: ${result.error}`,
+    displayContent:
+      `⚠️ Subagent 任务失败\n\n` +
+      `类型: ${subagentType}\n` +
+      `任务: ${description}\n` +
+      `Agent ID: ${result.agentId || 'N/A'}\n` +
+      `耗时: ${duration}ms\n` +
+      `错误: ${result.error}`,
+    error: {
+      type: ToolErrorType.EXECUTION_ERROR,
+      message: result.error || 'Unknown error',
+    },
+    metadata: {
+      subagentSessionId,
+      subagentType,
+      subagentStatus: 'failed' as const,
+    },
+  };
+}
 
 /**
  * 处理后台执行模式

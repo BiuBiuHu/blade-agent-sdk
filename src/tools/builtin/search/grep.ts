@@ -60,12 +60,6 @@ function getPlatformRipgrepPath(): string | null {
     return null;
   }
 
-  // 尝试从项目根目录的 vendor 目录查找
-  const vendorPath = join(process.cwd(), 'vendor', 'ripgrep', relativePath);
-  if (existsSync(vendorPath)) {
-    return vendorPath;
-  }
-
   // 尝试从模块安装目录查找（用于 npm 包）
   try {
     const moduleDir = new URL(
@@ -783,7 +777,18 @@ export const grepTool = createTool({
         };
       }
 
-      const searchPath = path ?? context.contextSnapshot?.cwd ?? process.cwd();
+      const searchPath = path ?? context.contextSnapshot?.cwd;
+      if (!searchPath) {
+        return {
+          success: false,
+          llmContent: 'No search path provided and no filesystem working directory is available.',
+          displayContent: '❌ 未提供搜索路径，且当前上下文没有可用的工作目录',
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: 'No search path available',
+          },
+        };
+      }
 
       updateOutput?.(`使用智能搜索策略查找模式 "${pattern}"...`);
 

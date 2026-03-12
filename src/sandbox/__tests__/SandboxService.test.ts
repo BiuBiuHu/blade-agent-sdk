@@ -302,7 +302,7 @@ describe('SandboxService', () => {
     it('should return original command when sandbox is disabled', () => {
       const service = getSandboxService();
       service.configure({ enabled: false });
-      const result = service.wrapCommandForSandbox('ls -la');
+      const result = service.wrapCommandForSandbox('ls -la', '/tmp');
       expect(result).toBe('ls -la');
     });
   });

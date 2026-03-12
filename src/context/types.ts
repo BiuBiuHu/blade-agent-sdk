@@ -170,7 +170,7 @@ export interface SessionEventBase {
   sessionId: string;
   timestamp: string;
   type: JSONLEventType;
-  cwd: string;
+  cwd?: string;
   gitBranch?: string;
   version: string;
 }

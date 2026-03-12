@@ -102,7 +102,10 @@ export function getSessionFilePathFromStorageRoot(
  * @param projectPath 项目路径
  * @returns Git 分支名称，如果不是 Git 仓库则返回 undefined
  */
-export function detectGitBranch(projectPath: string): string | undefined {
+export function detectGitBranch(projectPath?: string): string | undefined {
+  if (!projectPath) {
+    return undefined;
+  }
   try {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       cwd: projectPath,

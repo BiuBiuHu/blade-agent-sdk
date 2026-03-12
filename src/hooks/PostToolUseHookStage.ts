@@ -54,6 +54,9 @@ export class PostToolUseHookStage implements PipelineStage {
         execution.context.messageId ||
         `tool_${nanoid()}`;
       const projectDir = getEffectiveProjectDir(execution.context);
+      if (!projectDir) {
+        return;
+      }
 
       const hookResult = await this.hookManager.executePostToolHooks(
         tool.name,

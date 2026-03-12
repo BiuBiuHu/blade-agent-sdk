@@ -192,8 +192,18 @@ Before executing commands:
 
       const workDir =
         cwd
-        || context.contextSnapshot?.cwd
-        || process.cwd();
+        || context.contextSnapshot?.cwd;
+      if (!workDir) {
+        return {
+          success: false,
+          llmContent: 'No working directory provided and no filesystem working directory is available.',
+          displayContent: '❌ 未提供工作目录，且当前上下文没有可用的工作目录',
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: 'No working directory available',
+          },
+        };
+      }
       const effectiveCommand = sandboxService.wrapCommandForSandbox(command, workDir);
 
       if (sandboxService.isEnabled() && effectiveCommand !== command) {
@@ -309,14 +319,14 @@ Before executing commands:
  */
 function executeInBackground(
   command: string,
-  cwd?: string,
+  cwd: string,
   env?: Record<string, string>
 ): ToolResult {
   const manager = BackgroundShellManager.getInstance();
   const backgroundProcess = manager.startBackgroundProcess({
     command,
     sessionId: randomUUID(), // 每个后台进程使用唯一 ID
-    cwd: cwd || process.cwd(),
+    cwd,
     env,
   });
 
@@ -359,7 +369,7 @@ function executeInBackground(
  */
 async function executeWithAcpTerminal(
   command: string,
-  cwd: string | undefined,
+  cwd: string,
   env: Record<string, string> | undefined,
   timeout: number,
   signal: AbortSignal,
@@ -370,7 +380,7 @@ async function executeWithAcpTerminal(
   try {
     const terminalService = getTerminalService();
     const result = await terminalService.execute(command, {
-      cwd: cwd || process.cwd(),
+      cwd,
       env,
       timeout,
       signal,
@@ -496,7 +506,7 @@ async function executeWithAcpTerminal(
  */
 async function executeWithTimeout(
   command: string,
-  cwd: string | undefined,
+  cwd: string,
   env: Record<string, string> | undefined,
   timeout: number,
   signal: AbortSignal,
@@ -510,7 +520,7 @@ async function executeWithTimeout(
 
     // 创建进程
     const bashProcess = spawn('bash', ['-c', command], {
-      cwd: cwd || process.cwd(),
+      cwd,
       env: { ...process.env, ...env, BLADE_CLI: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

@@ -31,13 +31,19 @@ type FileConfigSource = Exclude<ConfigSource, 'plugin'>;
 export class SubagentRegistry {
   private subagents = new Map<string, SubagentConfig>();
   private logger: InternalLogger;
+  private projectDir?: string;
 
-  constructor(logger: InternalLogger = NOOP_LOGGER) {
+  constructor(logger: InternalLogger = NOOP_LOGGER, projectDir?: string) {
     this.logger = logger.child(LogCategory.AGENT);
+    this.projectDir = projectDir;
   }
 
   setLogger(logger: InternalLogger): void {
     this.logger = logger.child(LogCategory.AGENT);
+  }
+
+  setProjectDir(projectDir?: string): void {
+    this.projectDir = projectDir;
   }
 
   /**
@@ -210,7 +216,7 @@ export class SubagentRegistry {
    *
    * @returns 加载的 subagent 数量
    */
-  loadFromStandardLocations(): number {
+  loadFromStandardLocations(projectDir: string | undefined = this.projectDir): number {
     // 1. 加载内置配置
     this.loadBuiltinAgents();
 
@@ -219,16 +225,20 @@ export class SubagentRegistry {
     this.loadFromDirectory(claudeCodeUserAgentsDir, 'claude-code-user');
 
     // 3. 加载 Claude Code 项目级配置（可覆盖用户级）
-    const claudeCodeProjectAgentsDir = path.join(process.cwd(), '.claude', 'agents');
-    this.loadFromDirectory(claudeCodeProjectAgentsDir, 'claude-code-project');
+    if (projectDir) {
+      const claudeCodeProjectAgentsDir = path.join(projectDir, '.claude', 'agents');
+      this.loadFromDirectory(claudeCodeProjectAgentsDir, 'claude-code-project');
+    }
 
     // 4. 加载 Blade 用户级配置（可覆盖 Claude Code）
     const bladeUserAgentsDir = path.join(os.homedir(), '.blade', 'agents');
     this.loadFromDirectory(bladeUserAgentsDir, 'blade-user');
 
     // 5. 加载 Blade 项目级配置（可覆盖所有）
-    const bladeProjectAgentsDir = path.join(process.cwd(), '.blade', 'agents');
-    this.loadFromDirectory(bladeProjectAgentsDir, 'blade-project');
+    if (projectDir) {
+      const bladeProjectAgentsDir = path.join(projectDir, '.blade', 'agents');
+      this.loadFromDirectory(bladeProjectAgentsDir, 'blade-project');
+    }
 
     const count = this.getAllNames().length;
     this.logger.debug(`📦 Loaded ${count} subagents from standard locations`);
@@ -304,22 +314,28 @@ export class SubagentRegistry {
    * 获取 Claude Code 配置目录路径
    * 用于 UI 展示
    */
-  static getClaudeCodeAgentsDir(type: 'user' | 'project'): string {
+  static getClaudeCodeAgentsDir(
+    type: 'user' | 'project',
+    projectDir?: string,
+  ): string | undefined {
     if (type === 'user') {
       return path.join(os.homedir(), '.claude', 'agents');
     }
-    return path.join(process.cwd(), '.claude', 'agents');
+    return projectDir ? path.join(projectDir, '.claude', 'agents') : undefined;
   }
 
   /**
    * 获取 Blade 配置目录路径
    * 用于 UI 展示
    */
-  static getBladeAgentsDir(type: 'user' | 'project'): string {
+  static getBladeAgentsDir(
+    type: 'user' | 'project',
+    projectDir?: string,
+  ): string | undefined {
     if (type === 'user') {
       return path.join(os.homedir(), '.blade', 'agents');
     }
-    return path.join(process.cwd(), '.blade', 'agents');
+    return projectDir ? path.join(projectDir, '.blade', 'agents') : undefined;
   }
 }
 

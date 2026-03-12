@@ -42,7 +42,7 @@ export class SubagentExecutor {
         // that context is intentionally empty. The legacy fallback only applies
         // to out-of-band subagent execution with no parent snapshot at all. In
         // that case, use an empty default context so subagents do not gain
-        // implicit filesystem access from process.cwd().
+        // implicit filesystem access from the host process.
         defaultContext: context.snapshot
           ? context.snapshot.context
           : {},

@@ -6,7 +6,7 @@ type BackgroundShellStatus = 'running' | 'exited' | 'killed' | 'error';
 interface StartOptions {
   command: string;
   sessionId: string;
-  cwd?: string;
+  cwd: string;
   env?: Record<string, string | undefined>;
 }
 
@@ -77,7 +77,7 @@ export class BackgroundShellManager {
     }
 
     const child = spawn('bash', ['-c', options.command], {
-      cwd: options.cwd || process.cwd(),
+      cwd: options.cwd,
       env: mergedEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

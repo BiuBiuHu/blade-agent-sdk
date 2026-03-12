@@ -246,7 +246,7 @@ export class LoopRunner {
   private async buildNormalSystemPrompt(context: ChatContext): Promise<string> {
     const basePrompt =
       context.systemPrompt ?? (await this.buildSystemPromptOnDemand(context));
-    const envContext = getEnvironmentContext();
+    const envContext = getEnvironmentContext(context.snapshot?.cwd ?? this.defaultProjectPath);
     return basePrompt
       ? `${envContext}\n\n---\n\n${basePrompt}`
       : envContext;
@@ -467,9 +467,13 @@ export class LoopRunner {
 
       async onStopCheck(ctx) {
         try {
+          const projectDir = context.snapshot?.cwd ?? self.defaultProjectPath;
+          if (!projectDir) {
+            return { shouldStop: true };
+          }
           const hookManager = HookManager.getInstance();
           const stopResult = await hookManager.executeStopHooks({
-            projectDir: context.snapshot?.cwd ?? self.defaultProjectPath ?? process.cwd(),
+            projectDir,
             sessionId: context.sessionId,
             permissionMode: context.permissionMode ?? PermissionMode.DEFAULT,
             reason: ctx.content,
@@ -500,6 +504,7 @@ export class LoopRunner {
               apiKey: cs.apiKey,
               baseURL: cs.baseUrl,
               customHeaders: cs.customHeaders,
+              projectDir: context.snapshot?.cwd ?? self.defaultProjectPath,
             }
           );
           context.messages = compactResult.compactedMessages;

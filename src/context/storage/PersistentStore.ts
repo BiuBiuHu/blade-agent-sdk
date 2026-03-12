@@ -27,7 +27,7 @@ import {
  */
 export class PersistentStore {
   private readonly storageRoot: string;
-  private readonly projectPath: string;
+  private readonly projectPath?: string;
   private readonly maxSessions: number;
   private readonly version: string;
 
@@ -35,7 +35,7 @@ export class PersistentStore {
     storageRoot: string = getSessionStoragePath(),
     maxSessions: number = 100,
     version: string = '0.0.10',
-    projectPath: string = process.cwd(),
+    projectPath?: string,
   ) {
     this.storageRoot = normalizeSessionStorageRoot(storageRoot);
     this.projectPath = projectPath;
@@ -53,8 +53,8 @@ export class PersistentStore {
       sessionId,
       timestamp: new Date().toISOString(),
       type,
-      cwd: this.projectPath,
-      gitBranch: detectGitBranch(this.projectPath),
+      ...(this.projectPath ? { cwd: this.projectPath } : {}),
+      ...(this.projectPath ? { gitBranch: detectGitBranch(this.projectPath) } : {}),
       version: this.version,
       data,
     } as SessionEvent;
@@ -540,7 +540,7 @@ export class PersistentStore {
   async getStorageStats(): Promise<{
     totalSessions: number;
     totalSize: number;
-    projectPath: string;
+    projectPath?: string;
   }> {
     try {
       const sessions = await this.listSessions();

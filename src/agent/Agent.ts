@@ -486,6 +486,7 @@ export class Agent {
 
   private async loadSubagents(): Promise<void> {
     subagentRegistry.setLogger(this.rootLogger);
+    subagentRegistry.setProjectDir(getContextCwd(this.defaultContext));
     if (subagentRegistry.getAllNames().length > 0) {
       this.logger.debug(`📦 Subagents already loaded: ${subagentRegistry.getAllNames().join(', ')}`);
       return;

@@ -45,7 +45,7 @@ export class ContextManager {
   private readonly compressor: ContextCompressor;
   private readonly filter: ContextFilter;
   private readonly options: ContextManagerOptions;
-  private readonly projectPath: string;
+  private readonly projectPath?: string;
 
   private currentSessionId: string | null = null;
   private initialized = false;
@@ -71,9 +71,9 @@ export class ContextManager {
       },
       compressionThreshold: options.compressionThreshold || 6000,
       enableVectorSearch: options.enableVectorSearch || false,
-      projectPath: options.projectPath || process.cwd(),
+      projectPath: options.projectPath,
     };
-    this.projectPath = this.options.projectPath || process.cwd();
+    this.projectPath = this.options.projectPath;
 
     // 初始化存储层
     this.memory = new MemoryStore(this.options.storage.maxMemorySize);
@@ -546,13 +546,13 @@ export class ContextManager {
     try {
       const cwd = this.projectPath;
       return {
-        projectPath: cwd,
+        ...(cwd ? { projectPath: cwd } : {}),
         currentFiles: [],
         recentFiles: [],
         environment: {
           nodeVersion: process.version,
           platform: process.platform,
-          cwd,
+          ...(cwd ? { cwd } : {}),
         },
       };
     } catch (_error) {

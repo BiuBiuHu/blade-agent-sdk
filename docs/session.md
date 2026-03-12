@@ -25,8 +25,15 @@ const options: SessionOptions = {
   maxTurns: 12,
   allowedTools: ['Read', 'Edit', 'Write', 'Bash'],
   disallowedTools: ['KillShell'],
-  cwd: process.cwd(),
-  env: { CI: '1' },
+  defaultContext: {
+    capabilities: {
+      filesystem: {
+        roots: ['/workspace/project'],
+        cwd: '/workspace/project',
+      },
+    },
+    environment: { CI: '1' },
+  },
 };
 ```
 
