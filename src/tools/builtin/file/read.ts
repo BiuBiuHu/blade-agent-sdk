@@ -1,6 +1,7 @@
 import { basename, extname } from 'path';
 import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { hasFilesystemCapability } from '../../../runtime/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { getErrorMessage, getErrorName } from '../../../utils/errorUtils.js';
 import { createTool } from '../../core/createTool.js';
@@ -83,6 +84,18 @@ export const readTool = createTool({
     const signal = context.signal ?? new AbortController().signal;
 
     try {
+      if (!hasFilesystemCapability(context.contextSnapshot)) {
+        return {
+          success: false,
+          llmContent: 'No filesystem access in the current runtime context.',
+          displayContent: '❌ 当前上下文未启用文件系统访问',
+          error: {
+            type: ToolErrorType.PERMISSION_DENIED,
+            message: 'No filesystem access in current context',
+          },
+        };
+      }
+
       updateOutput?.('Starting file read...');
 
       // 获取文件系统服务（ACP 或本地）

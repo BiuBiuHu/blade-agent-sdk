@@ -5,6 +5,7 @@ import { stat } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { join, resolve } from 'path';
 import { z } from 'zod';
+import { hasFilesystemCapability } from '../../../runtime/index.js';
 import { getErrorCode, getErrorMessage, getErrorName } from '../../../utils/errorUtils.js';
 
 function getEntryStats(entry: Entry): Stats | undefined {
@@ -86,7 +87,7 @@ export const globTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {
       pattern,
-      path = process.cwd(),
+      path,
       max_results,
       include_directories,
       case_sensitive,
@@ -95,10 +96,24 @@ export const globTool = createTool({
     const signal = context.signal ?? new AbortController().signal;
 
     try {
-      updateOutput?.(`Searching in ${path} for pattern "${pattern}"...`);
+      if (!hasFilesystemCapability(context.contextSnapshot)) {
+        return {
+          success: false,
+          llmContent: 'No filesystem access in the current runtime context.',
+          displayContent: '❌ 当前上下文未启用文件系统访问',
+          error: {
+            type: ToolErrorType.PERMISSION_DENIED,
+            message: 'No filesystem access in current context',
+          },
+        };
+      }
+
+      const searchRoot = path ?? context.contextSnapshot?.cwd ?? process.cwd();
+
+      updateOutput?.(`Searching in ${searchRoot} for pattern "${pattern}"...`);
 
       // 验证搜索路径存在
-      const searchPath = resolve(path);
+      const searchPath = resolve(searchRoot);
       try {
         const stats = await stat(searchPath);
         if (!stats.isDirectory()) {

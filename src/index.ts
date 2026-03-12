@@ -4,6 +4,12 @@ export type {
     McpToolDefinition, ToolResponse as McpToolResponse, SdkMcpServerHandle,
     SdkTool
 } from './mcp/index.js';
+export {
+    createContextSnapshot,
+    hasFilesystemCapability,
+    mergeContext
+} from './runtime/index.js';
+export type { ContextSnapshot, RuntimeContext } from './runtime/index.js';
 export { createSession, forkSession, prompt, resumeSession } from './session/index.js';
 export type {
     AgentDefinition,

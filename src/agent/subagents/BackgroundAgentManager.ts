@@ -9,6 +9,7 @@
 
 import { nanoid } from 'nanoid';
 import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
+import type { ContextSnapshot } from '../../runtime/index.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import type { BladeConfig, PermissionMode } from '../../types/common.js';
 import { Agent } from '../Agent.js';
@@ -62,6 +63,9 @@ export interface StartBackgroundAgentOptions {
 
   /** 恢复时的初始消息（用于 resume） */
   existingMessages?: Message[];
+
+  /** 父 turn 的 context snapshot（如果存在则继承） */
+  snapshot?: ContextSnapshot;
 }
 
 /**
@@ -136,6 +140,7 @@ export class BackgroundAgentManager {
       permissionMode,
       agentId,
       existingMessages,
+      snapshot,
     } = options;
 
     // 生成或使用已有的 agent ID
@@ -169,7 +174,8 @@ export class BackgroundAgentManager {
       parentSessionId,
       permissionMode,
       abortController.signal,
-      existingMessages
+      existingMessages,
+      snapshot,
     );
 
     // 记录运行时信息
@@ -200,7 +206,8 @@ export class BackgroundAgentManager {
     parentSessionId: string | undefined,
     permissionMode: PermissionMode | undefined,
     signal: AbortSignal,
-    existingMessages?: Message[]
+    existingMessages?: Message[],
+    snapshot?: ContextSnapshot,
   ): Promise<SubagentResult> {
     const startTime = Date.now();
 
@@ -222,7 +229,7 @@ export class BackgroundAgentManager {
         messages: existingMessages || [],
         userId: 'subagent',
         sessionId: agentId,
-        workspaceRoot: process.cwd(),
+        snapshot,
         permissionMode,
         subagentInfo: {
           parentSessionId: parentSessionId || '',

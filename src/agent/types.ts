@@ -2,6 +2,7 @@
  * Agent核心类型定义
  */
 
+import type { ContextSnapshot } from '../runtime/index.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { OutputFormat, PermissionMode, PermissionsConfig, SandboxSettings } from '../types/common.js';
@@ -39,7 +40,7 @@ export interface ChatContext {
   messages: Message[];
   userId: string;
   sessionId: string;
-  workspaceRoot: string;
+  snapshot?: ContextSnapshot;
   signal?: AbortSignal;
   confirmationHandler?: ConfirmationHandler; // 会话级别的确认处理器
   permissionMode?: PermissionMode; // 当前权限模式（用于 Plan 模式判断）

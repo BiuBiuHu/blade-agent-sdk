@@ -10,7 +10,6 @@ function createContext(overrides: Partial<ChatContext> = {}): ChatContext {
     messages: [],
     userId: 'test-user',
     sessionId: 'test-session',
-    workspaceRoot: '/tmp/test',
     permissionMode: 'plan',
     ...overrides,
   } as ChatContext;

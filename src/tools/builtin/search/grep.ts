@@ -4,6 +4,7 @@ import { readdir, readFile } from 'fs/promises';
 import { join, relative } from 'path';
 import picomatch from 'picomatch';
 import { z } from 'zod';
+import { hasFilesystemCapability } from '../../../runtime/index.js';
 import { getErrorMessage, getErrorName } from '../../../utils/errorUtils.js';
 import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
@@ -753,7 +754,7 @@ export const grepTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {
       pattern,
-      path = process.cwd(),
+      path,
       glob,
       type,
       output_mode,
@@ -770,6 +771,20 @@ export const grepTool = createTool({
     const signal = context.signal ?? new AbortController().signal;
 
     try {
+      if (!hasFilesystemCapability(context.contextSnapshot)) {
+        return {
+          success: false,
+          llmContent: 'No filesystem access in the current runtime context.',
+          displayContent: '❌ 当前上下文未启用文件系统访问',
+          error: {
+            type: ToolErrorType.PERMISSION_DENIED,
+            message: 'No filesystem access in current context',
+          },
+        };
+      }
+
+      const searchPath = path ?? context.contextSnapshot?.cwd ?? process.cwd();
+
       updateOutput?.(`使用智能搜索策略查找模式 "${pattern}"...`);
 
       let result: { stdout: string; stderr: string; exitCode: number } | null = null;
@@ -784,7 +799,7 @@ export const grepTool = createTool({
 
           const args = buildRipgrepArgs({
             pattern,
-            path,
+            path: searchPath,
             glob,
             type,
             output_mode,
@@ -807,13 +822,13 @@ export const grepTool = createTool({
       }
 
       // 策略 2: 降级到 git grep (如果在 git 仓库中)
-      if (!result && (await isGitRepository(path))) {
+      if (!result && (await isGitRepository(searchPath))) {
         try {
           updateOutput?.(`📦 使用 git grep`);
 
           result = await executeGitGrep(
             pattern,
-            path,
+            searchPath,
             {
               caseInsensitive: caseInsensitive ?? false,
               glob,
@@ -835,7 +850,7 @@ export const grepTool = createTool({
 
           result = await executeSystemGrep(
             pattern,
-            path,
+            searchPath,
             {
               caseInsensitive: caseInsensitive ?? false,
               contextLines,
@@ -855,7 +870,7 @@ export const grepTool = createTool({
 
         const fallbackResult = await executeFallbackGrep(
           pattern,
-          path,
+          searchPath,
           {
             caseInsensitive: caseInsensitive ?? false,
             glob,
@@ -891,7 +906,7 @@ export const grepTool = createTool({
 
       const metadata: GrepMetadata = {
         search_pattern: pattern,
-        search_path: path,
+        search_path: searchPath,
         output_mode,
         case_insensitive: caseInsensitive ?? false,
         total_matches: matches.length,

@@ -67,6 +67,7 @@ export class LoopRunner {
     private runtimeOptions: AgentOptions,
     private modelManager: ModelManager,
     private executionPipeline: ExecutionPipeline,
+    private defaultProjectPath?: string,
     logger?: InternalLogger,
     private streamHandler?: StreamResponseHandler,
     private compactionHandler?: CompactionHandler,
@@ -244,19 +245,23 @@ export class LoopRunner {
 
   private async buildNormalSystemPrompt(context: ChatContext): Promise<string> {
     const basePrompt =
-      context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
+      context.systemPrompt ?? (await this.buildSystemPromptOnDemand(context));
     const envContext = getEnvironmentContext();
     return basePrompt
       ? `${envContext}\n\n---\n\n${basePrompt}`
       : envContext;
   }
 
-  async buildSystemPromptOnDemand(): Promise<string> {
+  async buildSystemPromptOnDemand(context?: ChatContext): Promise<string> {
     const replacePrompt = this.runtimeOptions.systemPrompt;
     const appendPrompt = this.runtimeOptions.appendSystemPrompt;
+    // Undefined projectPath is intentional for context-free turns: it disables
+    // filesystem-derived prompt sources such as BLADE.md instead of falling
+    // back to an implicit process cwd.
+    const projectPath = context?.snapshot?.cwd ?? this.defaultProjectPath;
 
     const result = await buildSystemPrompt({
-      projectPath: process.cwd(),
+      projectPath,
       replaceDefault: replacePrompt,
       append: appendPrompt,
       includeEnvironment: false,
@@ -340,7 +345,7 @@ export class LoopRunner {
       executionContext: {
         sessionId: context.sessionId,
         userId: context.userId || 'default',
-        workspaceRoot: context.workspaceRoot || process.cwd(),
+        contextSnapshot: context.snapshot,
         confirmationHandler: context.confirmationHandler,
       },
 
@@ -464,7 +469,7 @@ export class LoopRunner {
         try {
           const hookManager = HookManager.getInstance();
           const stopResult = await hookManager.executeStopHooks({
-            projectDir: process.cwd(),
+            projectDir: context.snapshot?.cwd ?? self.defaultProjectPath ?? process.cwd(),
             sessionId: context.sessionId,
             permissionMode: context.permissionMode ?? PermissionMode.DEFAULT,
             reason: ctx.content,

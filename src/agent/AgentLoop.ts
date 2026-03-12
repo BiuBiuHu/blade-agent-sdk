@@ -8,6 +8,7 @@
  */
 
 import type { InternalLogger } from '../logging/Logger.js';
+import type { ContextSnapshot } from '../runtime/index.js';
 import type { ChatResponse, IChatService, Message, ToolCall } from '../services/ChatServiceInterface.js';
 import type { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
@@ -71,7 +72,7 @@ export interface AgentLoopConfig {
   executionContext: {
     sessionId: string;
     userId: string;
-    workspaceRoot: string;
+    contextSnapshot?: ContextSnapshot;
     confirmationHandler?: ConfirmationHandler;
   };
 

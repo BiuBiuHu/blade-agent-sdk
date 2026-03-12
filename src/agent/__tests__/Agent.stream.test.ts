@@ -98,7 +98,6 @@ describe('Agent.streamChat', () => {
         messages: [],
         userId: 'test-user',
         sessionId: 'test-session',
-        workspaceRoot: '/tmp',
         permissionMode: PermissionMode.PLAN,
       };
 
@@ -126,7 +125,6 @@ describe('Agent.streamChat', () => {
         messages: [],
         userId: 'test-user',
         sessionId: 'test-session',
-        workspaceRoot: '/tmp',
         permissionMode: PermissionMode.DEFAULT,
       };
 
@@ -150,7 +148,6 @@ describe('Agent.streamChat', () => {
         messages: [],
         userId: 'test-user',
         sessionId: 'test-session',
-        workspaceRoot: '/tmp',
         permissionMode: PermissionMode.PLAN,
       };
 
@@ -182,7 +179,6 @@ describe('Agent.streamChat', () => {
         messages: [],
         userId: 'test-user',
         sessionId: 'test-session',
-        workspaceRoot: '/tmp',
         permissionMode: PermissionMode.PLAN,
       };
 
@@ -219,7 +215,6 @@ describe('Agent.streamChat', () => {
         messages: [],
         userId: 'test-user',
         sessionId: 'test-session',
-        workspaceRoot: '/tmp',
         permissionMode: PermissionMode.PLAN,
       };
 
@@ -283,7 +278,6 @@ describe('Agent.streamChat', () => {
         messages: [],
         userId: 'test-user',
         sessionId: 'test-session',
-        workspaceRoot: '/tmp',
         permissionMode: PermissionMode.DEFAULT,
       };
 

@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(bun test)"
+      "Bash(bun test)",
+      "WebSearch",
+      "WebFetch(domain:docs.langchain.com)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:hyperskill.org)",
+      "WebFetch(domain:readmedium.com)",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }

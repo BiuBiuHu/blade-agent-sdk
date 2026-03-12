@@ -1,4 +1,5 @@
 import type { SdkMcpServerHandle } from '../mcp/SdkMcpServer.js';
+import type { ContextSnapshot, RuntimeContext } from '../runtime/index.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { ExecutionContext, ToolDefinition, ToolResult } from '../tools/types/index.js';
 import type { McpServerConfig, OutputFormat, PermissionMode, ProviderType, SandboxSettings, TokenUsage } from '../types/common.js';
@@ -112,9 +113,9 @@ export interface SessionOptions {
 
   hooks?: Partial<Record<SessionHookEvent, HookCallback[]>>;
 
-  cwd?: string;
-  env?: Record<string, string>;
+  defaultContext?: RuntimeContext;
   logger?: AgentLogger;
+  storagePath?: string;
 
   outputFormat?: OutputFormat;
 
@@ -125,6 +126,7 @@ export interface SessionOptions {
 export interface SendOptions {
   signal?: AbortSignal;
   maxTurns?: number;
+  context?: RuntimeContext;
 }
 
 export interface StreamOptions {
@@ -175,6 +177,9 @@ export interface ISession extends AsyncDisposable {
   close(): void;
   abort(): void;
 
+  getDefaultContext(): RuntimeContext;
+  setDefaultContext(context: RuntimeContext): void;
+
   setPermissionMode(mode: PermissionMode): void;
   setModel(model: string): Promise<void>;
   setMaxTurns(maxTurns: number): void;
@@ -189,3 +194,5 @@ export interface ISession extends AsyncDisposable {
 
   fork(options?: ForkSessionOptions): Promise<ISession>;
 }
+
+export type { RuntimeContext, ContextSnapshot };

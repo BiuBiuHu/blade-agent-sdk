@@ -1,0 +1,80 @@
+import { describe, expect, it, mock } from 'bun:test';
+import { createContextSnapshot } from '../../../runtime/index.js';
+
+const runAgenticLoop = mock(async () => ({
+  success: true,
+  finalMessage: 'done',
+  metadata: {
+    toolCallsCount: 0,
+    tokensUsed: 0,
+  },
+}));
+
+const createAgent = mock(async (_config, _options, deps) => ({
+  runAgenticLoop,
+  deps,
+}));
+
+mock.module('../../Agent.js', () => ({
+  Agent: {
+    create: createAgent,
+  },
+}));
+
+const { SubagentExecutor } = await import('../SubagentExecutor.js');
+
+describe('SubagentExecutor', () => {
+  it('should inherit the parent snapshot context when creating a subagent', async () => {
+    const snapshot = createContextSnapshot('parent-session', 'turn-1', {
+      capabilities: {
+        filesystem: {
+          roots: ['/parent-root'],
+          cwd: '/parent-root',
+        },
+      },
+      environment: {
+        TEST_ENV: '1',
+      },
+    });
+
+    const executor = new SubagentExecutor(
+      {
+        name: 'research',
+        description: 'Research subagent',
+      },
+      {
+        models: [
+          {
+            id: 'default',
+            name: 'gpt-4o-mini',
+            provider: 'openai-compatible',
+            model: 'gpt-4o-mini',
+            apiKey: 'test-key',
+            baseUrl: 'https://example.com',
+          },
+        ],
+        currentModelId: 'default',
+      },
+    );
+
+    await executor.execute({
+      prompt: 'inspect',
+      parentSessionId: 'parent-session',
+      snapshot,
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        defaultContext: snapshot.context,
+      }),
+    );
+    expect(runAgenticLoop).toHaveBeenCalledWith(
+      'inspect',
+      expect.objectContaining({
+        snapshot,
+      }),
+    );
+  });
+});

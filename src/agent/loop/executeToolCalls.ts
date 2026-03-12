@@ -1,4 +1,5 @@
 import { type InternalLogger, LogCategory, NOOP_LOGGER } from '../../logging/Logger.js';
+import type { ContextSnapshot } from '../../runtime/index.js';
 import type { ExecutionPipeline } from '../../tools/execution/ExecutionPipeline.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
@@ -10,7 +11,7 @@ import type { FunctionToolCall } from './types.js';
 interface ToolExecutionContext {
   sessionId: string;
   userId: string;
-  workspaceRoot: string;
+  contextSnapshot?: ContextSnapshot;
   confirmationHandler?: ConfirmationHandler;
 }
 
@@ -72,7 +73,7 @@ async function executeToolCall(
       {
         sessionId: input.executionContext.sessionId,
         userId: input.executionContext.userId,
-        workspaceRoot: input.executionContext.workspaceRoot,
+        contextSnapshot: input.executionContext.contextSnapshot,
         signal: input.signal,
         confirmationHandler: input.executionContext.confirmationHandler,
         permissionMode: input.permissionMode,

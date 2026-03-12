@@ -58,6 +58,22 @@ export function getProjectStoragePath(projectPath: string): string {
 }
 
 /**
+ * 获取全局会话存储目录
+ *
+ * @param storageRoot 根存储目录，默认 ~/.blade
+ * @returns {storageRoot}/sessions/
+ */
+export function getSessionStoragePath(storageRoot: string = getBladeStorageRoot()): string {
+  return path.join(storageRoot, 'sessions');
+}
+
+export function normalizeSessionStorageRoot(storageRoot: string = getBladeStorageRoot()): string {
+  return path.basename(storageRoot) === 'sessions'
+    ? storageRoot
+    : getSessionStoragePath(storageRoot);
+}
+
+/**
  * 获取项目的会话文件路径
  *
  * @param projectPath 项目绝对路径
@@ -66,6 +82,19 @@ export function getProjectStoragePath(projectPath: string): string {
  */
 export function getSessionFilePath(projectPath: string, sessionId: string): string {
   return path.join(getProjectStoragePath(projectPath), `${sessionId}.jsonl`);
+}
+
+/**
+ * 获取全局会话文件路径
+ *
+ * @param storageRoot 会话存储根目录
+ * @param sessionId 会话 ID
+ */
+export function getSessionFilePathFromStorageRoot(
+  storageRoot: string,
+  sessionId: string,
+): string {
+  return path.join(normalizeSessionStorageRoot(storageRoot), `${sessionId}.jsonl`);
 }
 
 /**

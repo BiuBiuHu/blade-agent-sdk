@@ -190,7 +190,10 @@ Before executing commands:
         };
       }
 
-      const workDir = cwd || process.cwd();
+      const workDir =
+        cwd
+        || context.contextSnapshot?.cwd
+        || process.cwd();
       const effectiveCommand = sandboxService.wrapCommandForSandbox(command, workDir);
 
       if (sandboxService.isEnabled() && effectiveCommand !== command) {
@@ -200,7 +203,7 @@ Before executing commands:
       }
 
       if (run_in_background) {
-        return executeInBackground(effectiveCommand, cwd, env);
+        return executeInBackground(effectiveCommand, workDir, env);
       }
 
       // 检查是否在 ACP 模式下运行
@@ -208,9 +211,9 @@ Before executing commands:
       if (useAcp) {
         // ACP 模式：通过 IDE 终端执行命令
         updateOutput?.('通过 IDE 终端执行命令...');
-        return executeWithAcpTerminal(effectiveCommand, cwd, env, timeout, signal, updateOutput);
+        return executeWithAcpTerminal(effectiveCommand, workDir, env, timeout, signal, updateOutput);
       } else {
-        return executeWithTimeout(effectiveCommand, cwd, env, timeout, signal, updateOutput);
+        return executeWithTimeout(effectiveCommand, workDir, env, timeout, signal, updateOutput);
       }
     } catch (error: unknown) {
       if (getErrorName(error) === 'AbortError') {

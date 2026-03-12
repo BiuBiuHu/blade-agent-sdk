@@ -1,6 +1,10 @@
 import * as fs from 'node:fs/promises';
 import { JSONLStore } from '@/context/storage/JSONLStore.js';
-import { getProjectStoragePath, getSessionFilePath } from '@/context/storage/pathUtils.js';
+import {
+  getSessionFilePathFromStorageRoot,
+  getSessionStoragePath,
+  normalizeSessionStorageRoot,
+} from '@/context/storage/pathUtils.js';
 import type { PartInfo, SessionEvent, SessionInfo } from '../context/types.js';
 import type { Message, ToolCall } from '../services/ChatServiceInterface.js';
 import type { JsonValue, MessageRole } from '../types/common.js';
@@ -180,7 +184,11 @@ function getToolCallState(
 }
 
 export class JsonlSessionStore implements SessionStore {
-  constructor(private readonly workspaceRoot: string) {}
+  private readonly storageRoot: string;
+
+  constructor(storageRoot: string = getSessionStoragePath()) {
+    this.storageRoot = normalizeSessionStorageRoot(storageRoot);
+  }
 
   async loadState(sessionId: string): Promise<SessionState | null> {
     const entries = await this.readEntries(sessionId);
@@ -370,7 +378,7 @@ export class JsonlSessionStore implements SessionStore {
 
   async listSessions(): Promise<string[]> {
     try {
-      const storagePath = getProjectStoragePath(this.workspaceRoot);
+      const storagePath = this.storageRoot;
       const files = await fs.readdir(storagePath, { withFileTypes: true });
       return files
         .filter((file) => file.isFile() && file.name.endsWith('.jsonl'))
@@ -399,7 +407,7 @@ export class JsonlSessionStore implements SessionStore {
   }
 
   private async readEntries(sessionId: string): Promise<SessionEvent[]> {
-    const filePath = getSessionFilePath(this.workspaceRoot, sessionId);
+    const filePath = getSessionFilePathFromStorageRoot(this.storageRoot, sessionId);
     const store = new JSONLStore(filePath);
     return store.readAll();
   }

@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NOOP_LOGGER } from '../../logging/Logger.js';
+import { createContextSnapshot, type RuntimeContext } from '../../runtime/index.js';
 import type { ToolDefinition } from '../../tools/types/index.js';
 import { PermissionMode } from '../../types/common.js';
 import { HookEvent } from '../../types/constants.js';
@@ -56,7 +57,19 @@ function createOptions(overrides: Partial<SessionOptions> = {}): SessionOptions 
   return {
     provider: { type: 'openai-compatible', apiKey: 'test-key' },
     model: 'gpt-4o-mini',
+    storagePath: overrides.storagePath,
     ...overrides,
+  };
+}
+
+function createFilesystemContext(workspaceRoot: string): RuntimeContext {
+  return {
+    capabilities: {
+      filesystem: {
+        roots: [workspaceRoot],
+        cwd: workspaceRoot,
+      },
+    },
   };
 }
 
@@ -78,7 +91,7 @@ describe('SessionRuntime', () => {
         models: [],
       },
       PermissionMode.DEFAULT,
-      workspaceRoot,
+      createFilesystemContext(workspaceRoot),
       NOOP_LOGGER,
     );
     await runtime.close();
@@ -96,7 +109,7 @@ describe('SessionRuntime', () => {
         models: [],
       },
       PermissionMode.DEFAULT,
-      workspaceRoot,
+      createFilesystemContext(workspaceRoot),
       NOOP_LOGGER,
     );
 
@@ -121,7 +134,7 @@ describe('SessionRuntime', () => {
         currentModelId: 'default',
       },
       PermissionMode.DEFAULT,
-      workspaceRoot,
+      createFilesystemContext(workspaceRoot),
       NOOP_LOGGER,
     );
 
@@ -175,7 +188,7 @@ describe('SessionRuntime', () => {
         models: [],
       },
       PermissionMode.DEFAULT,
-      workspaceRoot,
+      createFilesystemContext(workspaceRoot),
       NOOP_LOGGER,
     );
 
@@ -184,7 +197,10 @@ describe('SessionRuntime', () => {
     const result = await runtime.getAgentRuntimeDeps().executionPipeline!.execute(
       'CustomTool',
       { value: 'original' },
-      { sessionId: 'session-3', workspaceRoot },
+      {
+        sessionId: 'session-3',
+        contextSnapshot: createContextSnapshot('session-3', 'turn-1', createFilesystemContext(workspaceRoot)),
+      },
     );
 
     expect(execute).toHaveBeenCalledWith(
@@ -231,7 +247,7 @@ describe('SessionRuntime', () => {
         models: [],
       },
       PermissionMode.DEFAULT,
-      workspaceRoot,
+      createFilesystemContext(workspaceRoot),
       NOOP_LOGGER,
     );
 
@@ -240,7 +256,10 @@ describe('SessionRuntime', () => {
     const result = await runtime.getAgentRuntimeDeps().executionPipeline!.execute(
       'CustomTool',
       { value: 'original' },
-      { sessionId: 'session-4', workspaceRoot },
+      {
+        sessionId: 'session-4',
+        contextSnapshot: createContextSnapshot('session-4', 'turn-1', createFilesystemContext(workspaceRoot)),
+      },
     );
 
     expect(canUseTool).toHaveBeenCalledWith(
@@ -282,7 +301,7 @@ describe('SessionRuntime', () => {
         models: [],
       },
       PermissionMode.DEFAULT,
-      workspaceRoot,
+      createFilesystemContext(workspaceRoot),
       NOOP_LOGGER,
     );
 
@@ -291,7 +310,10 @@ describe('SessionRuntime', () => {
     const result = await runtime.getAgentRuntimeDeps().executionPipeline!.execute(
       'CustomTool',
       { value: 'original' },
-      { sessionId: 'session-5', workspaceRoot },
+      {
+        sessionId: 'session-5',
+        contextSnapshot: createContextSnapshot('session-5', 'turn-1', createFilesystemContext(workspaceRoot)),
+      },
     );
 
     expect(result.success).toBe(false);

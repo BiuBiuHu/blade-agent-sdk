@@ -57,9 +57,9 @@ export class PlanExecutor {
   /**
    * 构建 Plan 模式系统提示词
    */
-  async buildPlanSystemPrompt(): Promise<string> {
+  async buildPlanSystemPrompt(context?: ChatContext): Promise<string> {
     const { prompt } = await buildSystemPrompt({
-      projectPath: process.cwd(),
+      projectPath: context?.snapshot?.cwd,
       mode: PermissionMode.PLAN,
       includeEnvironment: true,
       language: this.language,
@@ -77,7 +77,7 @@ export class PlanExecutor {
     executeLoop: LoopExecutor,
   ): Promise<LoopResult> {
     this.logger.debug('🔵 Processing Plan mode message...');
-    const systemPrompt = await this.buildPlanSystemPrompt();
+    const systemPrompt = await this.buildPlanSystemPrompt(context);
     const messageWithReminder = this.injectPlanReminder(message);
     return executeLoop(messageWithReminder, context, options, systemPrompt);
   }
@@ -91,7 +91,7 @@ export class PlanExecutor {
     options: LoopOptions | undefined,
     executeStream: StreamLoopExecutor,
   ): AsyncGenerator<AgentEvent, LoopResult> {
-    const systemPrompt = await this.buildPlanSystemPrompt();
+    const systemPrompt = await this.buildPlanSystemPrompt(context);
     const messageWithReminder = this.injectPlanReminder(message);
     return yield* executeStream(messageWithReminder, context, options, systemPrompt);
   }

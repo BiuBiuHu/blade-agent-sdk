@@ -2,6 +2,11 @@ import { nanoid } from 'nanoid';
 import { Agent } from '../agent/Agent.js';
 import type { ChatContext, LoopResult } from '../agent/types.js';
 import { createRootLogger, type InternalLogger, LogCategory } from '../logging/Logger.js';
+import {
+  createContextSnapshot,
+  type ContextSnapshot,
+  type RuntimeContext,
+} from '../runtime/index.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import {
   type BladeConfig,
@@ -43,23 +48,24 @@ class Session implements ISession {
   private readonly options: SessionOptions;
   private readonly store: SessionStore;
   private readonly isResumeSession: boolean;
-  private readonly workspaceRoot: string;
   private readonly rootLogger: InternalLogger;
   private readonly logger: InternalLogger;
   private maxTurns: number;
   private permissionMode: PermissionMode;
+  private defaultContext: RuntimeContext;
   private initialized = false;
 
   private pendingMessage: string | null = null;
   private pendingSendOptions: SendOptions | null = null;
+  private pendingContextSnapshot: ContextSnapshot | null = null;
 
   constructor(options: SessionOptions, sessionId?: string, isResume = false) {
     this.sessionId = sessionId || nanoid();
     this.options = options;
     this.maxTurns = options.maxTurns ?? 200;
     this.permissionMode = options.permissionMode ?? PermissionMode.DEFAULT;
-    this.workspaceRoot = options.cwd || process.cwd();
-    this.store = new JsonlSessionStore(this.workspaceRoot);
+    this.defaultContext = options.defaultContext ?? {};
+    this.store = new JsonlSessionStore(options.storagePath);
     this.isResumeSession = isResume;
     this.rootLogger = createRootLogger(options.logger, this.sessionId);
     this.logger = this.rootLogger.child(LogCategory.AGENT);
@@ -67,6 +73,14 @@ class Session implements ISession {
 
   get messages(): Message[] {
     return [...this._messages];
+  }
+
+  getDefaultContext(): RuntimeContext {
+    return this.defaultContext;
+  }
+
+  setDefaultContext(context: RuntimeContext): void {
+    this.defaultContext = context;
   }
 
   async initialize(): Promise<void> {
@@ -78,7 +92,7 @@ class Session implements ISession {
       this.options,
       config,
       this.permissionMode,
-      this.workspaceRoot,
+      this.defaultContext,
       this.rootLogger,
     );
     await this.runtime.initialize();
@@ -188,6 +202,12 @@ class Session implements ISession {
 
     this.pendingMessage = message;
     this.pendingSendOptions = options || null;
+    this.pendingContextSnapshot = createContextSnapshot(
+      this.sessionId,
+      nanoid(),
+      this.defaultContext,
+      options?.context,
+    );
   }
 
   async *stream(options?: StreamOptions): AsyncGenerator<StreamMessage> {
@@ -199,8 +219,10 @@ class Session implements ISession {
 
     let message = this.pendingMessage;
     const sendOptions = this.pendingSendOptions;
+    const pendingSnapshot = this.pendingContextSnapshot;
     this.pendingMessage = null;
     this.pendingSendOptions = null;
+    this.pendingContextSnapshot = null;
 
     message = await this.applyUserPromptHooks(message);
 
@@ -217,11 +239,15 @@ class Session implements ISession {
       ? this.combineSignals(sendOptions.signal, this.abortController.signal)
       : this.abortController.signal;
 
+    const snapshot = pendingSnapshot
+      ?? createContextSnapshot(this.sessionId, nanoid(), this.defaultContext, sendOptions?.context);
+    this.getRuntime().prepareTurn(snapshot);
+
     const context: ChatContext = {
       messages: this._messages,
       userId: 'sdk-user',
       sessionId: this.sessionId,
-      workspaceRoot: this.workspaceRoot,
+      snapshot,
       signal,
       permissionMode: this.permissionMode,
     };
@@ -350,6 +376,7 @@ class Session implements ISession {
     this.initialized = false;
     this.pendingMessage = null;
     this.pendingSendOptions = null;
+    this.pendingContextSnapshot = null;
     void this.runHookCallbacks(HookEvent.SessionEnd, { reason: 'other' });
     void this.runtime?.close();
     this.runtime = null;
@@ -468,7 +495,10 @@ class Session implements ISession {
       messageId: options?.messageId,
     });
 
-    const forkedSession = new Session(this.options);
+    const forkedSession = new Session({
+      ...this.options,
+      defaultContext: this.defaultContext,
+    });
     await forkedSession.initialize();
     forkedSession._messages = this.cloneSnapshotMessages(snapshot);
 

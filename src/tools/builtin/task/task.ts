@@ -272,6 +272,7 @@ export const taskTool = createTool({
         parentSessionId: context.sessionId,
         permissionMode: context.permissionMode,
         subagentSessionId,
+        snapshot: context.contextSnapshot,
       };
 
       updateOutput?.(`⚙️  执行任务中...`);
@@ -286,7 +287,7 @@ export const taskTool = createTool({
       try {
         const hookManager = HookManager.getInstance();
         const stopResult = await hookManager.executeSubagentStopHooks(subagent_type, {
-          projectDir: process.cwd(),
+          projectDir: context.contextSnapshot?.cwd || process.cwd(),
           sessionId: context.sessionId || 'unknown',
           permissionMode: context.permissionMode ?? PermissionMode.DEFAULT,
           taskDescription: description,
@@ -306,6 +307,8 @@ export const taskTool = createTool({
             prompt: stopResult.continueReason,
             parentSessionId: context.sessionId,
             permissionMode: context.permissionMode,
+            subagentSessionId,
+            snapshot: context.contextSnapshot,
           };
 
           const continueStartTime = Date.now();
@@ -437,6 +440,7 @@ function handleBackgroundExecution(
     parentSessionId: context.sessionId,
     permissionMode: context.permissionMode,
     agentId: subagentSessionId,
+    snapshot: context.contextSnapshot,
   });
 
   return {

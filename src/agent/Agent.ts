@@ -22,6 +22,10 @@ import {
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { buildSystemPrompt } from '../prompts/index.js';
 import {
+  getContextCwd,
+  type RuntimeContext,
+} from '../runtime/index.js';
+import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
@@ -55,7 +59,7 @@ import type {
 export interface AgentRuntimeDeps {
   executionPipeline?: ExecutionPipeline;
   contextManager?: ContextManager;
-  workspaceRoot?: string;
+  defaultContext?: RuntimeContext;
   mcpRegistry?: McpRegistry;
   runtimeManaged?: boolean;
   logger?: InternalLogger;
@@ -66,17 +70,17 @@ export class Agent {
   private runtimeOptions: AgentOptions;
   private isInitialized = false;
   private executionPipeline: ExecutionPipeline;
-  private readonly workspaceRoot: string;
+  private readonly defaultContext: RuntimeContext;
   private readonly runtimeManaged: boolean;
   private readonly runtimeMcpRegistry?: McpRegistry;
   private readonly logger: InternalLogger;
   private readonly rootLogger: InternalLogger;
+  private lastPreparedSkillCwd?: string;
 
   // 子模块
   private modelManager: ModelManager;
   private planExecutor: PlanExecutor;
   private loopRunner!: LoopRunner;
-  private attachmentHandler?: AttachmentHandler;
 
   constructor(
     config: BladeConfig,
@@ -88,7 +92,7 @@ export class Agent {
     this.rootLogger = deps.logger ?? NOOP_LOGGER;
     this.logger = this.rootLogger.child(LogCategory.AGENT);
     this.executionPipeline = deps.executionPipeline || this.createDefaultPipeline();
-    this.workspaceRoot = deps.workspaceRoot || process.cwd();
+    this.defaultContext = deps.defaultContext ?? {};
     this.runtimeManaged = deps.runtimeManaged ?? false;
     this.runtimeMcpRegistry =
       deps.mcpRegistry || (!this.runtimeManaged ? new McpRegistry() : undefined);
@@ -96,7 +100,7 @@ export class Agent {
       config,
       runtimeOptions.outputFormat,
       deps.contextManager,
-      this.workspaceRoot,
+      getContextCwd(this.defaultContext),
       this.rootLogger,
     );
     this.planExecutor = new PlanExecutor(config.language, this.rootLogger);
@@ -149,8 +153,6 @@ export class Agent {
 
       const modelConfig = this.modelManager.resolveModelConfig(this.runtimeOptions.modelId);
       await this.modelManager.applyModelConfig(modelConfig, '🚀 使用模型:');
-
-      this.attachmentHandler = new AttachmentHandler(this.workspaceRoot, this.rootLogger);
       const streamHandler = new StreamResponseHandler(
         () => this.modelManager.getChatService(),
         this.rootLogger,
@@ -166,6 +168,7 @@ export class Agent {
         this.runtimeOptions,
         this.modelManager,
         this.executionPipeline,
+        getContextCwd(this.defaultContext),
         this.rootLogger,
         streamHandler,
         compactionHandler,
@@ -190,9 +193,7 @@ export class Agent {
   ): Promise<string> {
     if (!this.isInitialized) throw new Error('Agent未初始化');
 
-    const enhancedMessage = this.attachmentHandler
-      ? await this.attachmentHandler.processAtMentionsForContent(message)
-      : message;
+    const enhancedMessage = await this.prepareMessageForContext(message, context);
 
     const loopOptions: LoopOptions = { signal: context.signal, ...options };
 
@@ -226,9 +227,7 @@ export class Agent {
     if (!this.isInitialized) throw new Error('Agent未初始化');
 
     const run = async () => {
-      const enhancedMessage = this.attachmentHandler
-        ? await this.attachmentHandler.processAtMentionsForContent(message)
-        : message;
+      const enhancedMessage = await this.prepareMessageForContext(message, context);
 
       const loopOptions: LoopOptions = { signal: context.signal, ...options };
 
@@ -289,7 +288,7 @@ export class Agent {
       messages: context.messages,
       userId: context.userId || 'subagent',
       sessionId: context.sessionId || `subagent_${Date.now()}`,
-      workspaceRoot: context.workspaceRoot || process.cwd(),
+      snapshot: context.snapshot,
       signal: context.signal,
       confirmationHandler: context.confirmationHandler,
       permissionMode: context.permissionMode,
@@ -421,8 +420,9 @@ export class Agent {
 
   private async initializeSystemPrompt(): Promise<void> {
     try {
+      const projectPath = getContextCwd(this.defaultContext);
       const result = await buildSystemPrompt({
-        projectPath: this.workspaceRoot,
+        projectPath,
         replaceDefault: this.runtimeOptions.systemPrompt,
         append: this.runtimeOptions.appendSystemPrompt,
         includeEnvironment: false,
@@ -503,8 +503,18 @@ export class Agent {
   }
 
   private async discoverSkills(): Promise<void> {
+    await this.discoverSkillsForCwd(
+      getContextCwd(this.defaultContext),
+    );
+  }
+
+  private async discoverSkillsForCwd(cwd?: string): Promise<void> {
+    if (!cwd || this.lastPreparedSkillCwd === cwd) {
+      return;
+    }
     try {
-      const result = await discoverSkills({ cwd: this.workspaceRoot });
+      const result = await discoverSkills({ cwd });
+      this.lastPreparedSkillCwd = cwd;
       if (result.skills.length > 0) {
         this.logger.debug(`✅ Discovered ${result.skills.length} skills: ${result.skills.map((s) => s.name).join(', ')}`);
       } else {
@@ -516,6 +526,29 @@ export class Agent {
     } catch (error) {
       this.logger.warn('Failed to discover skills:', error);
     }
+  }
+
+  private getContextWorkingDirectory(context: ChatContext): string | undefined {
+    return context.snapshot?.cwd || getContextCwd(this.defaultContext);
+  }
+
+  private createAttachmentHandler(context: ChatContext): AttachmentHandler | null {
+    const cwd = this.getContextWorkingDirectory(context);
+    if (!cwd) {
+      return null;
+    }
+    return new AttachmentHandler(cwd, this.rootLogger);
+  }
+
+  private async prepareMessageForContext(
+    message: UserMessageContent,
+    context: ChatContext,
+  ): Promise<UserMessageContent> {
+    await this.discoverSkillsForCwd(this.getContextWorkingDirectory(context));
+    const attachmentHandler = this.createAttachmentHandler(context);
+    return attachmentHandler
+      ? attachmentHandler.processAtMentionsForContent(message)
+      : message;
   }
 
   private log(message: string, data?: unknown): void {

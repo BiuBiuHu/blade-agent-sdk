@@ -15,9 +15,10 @@ import type {
 import { JSONLStore } from './JSONLStore.js';
 import {
   detectGitBranch,
-  getProjectStoragePath,
-  getSessionFilePath,
+  getSessionFilePathFromStorageRoot,
+  getSessionStoragePath,
   listProjectDirectories,
+  normalizeSessionStorageRoot,
 } from './pathUtils.js';
 
 /**
@@ -25,15 +26,18 @@ import {
  * 存储路径: ~/.blade/projects/{escaped-path}/{sessionId}.jsonl
  */
 export class PersistentStore {
+  private readonly storageRoot: string;
   private readonly projectPath: string;
   private readonly maxSessions: number;
   private readonly version: string;
 
   constructor(
-    projectPath: string = process.cwd(),
+    storageRoot: string = getSessionStoragePath(),
     maxSessions: number = 100,
-    version: string = '0.0.10'
+    version: string = '0.0.10',
+    projectPath: string = process.cwd(),
   ) {
+    this.storageRoot = normalizeSessionStorageRoot(storageRoot);
     this.projectPath = projectPath;
     this.maxSessions = maxSessions;
     this.version = version;
@@ -60,7 +64,7 @@ export class PersistentStore {
     sessionId: string,
     subagentInfo?: { parentSessionId: string; subagentType: string; isSidechain: boolean }
   ): Promise<void> {
-    const filePath = getSessionFilePath(this.projectPath, sessionId);
+    const filePath = getSessionFilePathFromStorageRoot(this.storageRoot, sessionId);
     const store = new JSONLStore(filePath);
     const stats = await store.getStats();
     if (stats.lineCount > 0) return;
@@ -102,7 +106,7 @@ export class PersistentStore {
    */
   async initialize(): Promise<void> {
     try {
-      const storagePath = getProjectStoragePath(this.projectPath);
+      const storagePath = this.storageRoot;
       await fs.mkdir(storagePath, { recursive: true, mode: 0o755 });
       console.log(`[PersistentStore] 初始化存储目录: ${storagePath}`);
     } catch (error) {
@@ -140,7 +144,7 @@ export class PersistentStore {
     }
   ): Promise<string> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
+      const filePath = getSessionFilePathFromStorageRoot(this.storageRoot, sessionId);
       const store = new JSONLStore(filePath);
       await this.ensureSessionCreated(sessionId, subagentInfo);
       const now = new Date().toISOString();
@@ -185,7 +189,7 @@ export class PersistentStore {
     }
   ): Promise<string> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
+      const filePath = getSessionFilePathFromStorageRoot(this.storageRoot, sessionId);
       const store = new JSONLStore(filePath);
       await this.ensureSessionCreated(sessionId, subagentInfo);
       const now = new Date().toISOString();
@@ -273,7 +277,7 @@ export class PersistentStore {
     }
   ): Promise<string> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
+      const filePath = getSessionFilePathFromStorageRoot(this.storageRoot, sessionId);
       const store = new JSONLStore(filePath);
       await this.ensureSessionCreated(sessionId, subagentInfo);
       const now = new Date().toISOString();
@@ -348,7 +352,7 @@ export class PersistentStore {
     parentUuid: string | null = null
   ): Promise<string> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
+      const filePath = getSessionFilePathFromStorageRoot(this.storageRoot, sessionId);
       const store = new JSONLStore(filePath);
       await this.ensureSessionCreated(sessionId);
       const now = new Date().toISOString();
@@ -488,7 +492,7 @@ export class PersistentStore {
    */
   async deleteSession(sessionId: string): Promise<void> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
+      const filePath = getSessionFilePathFromStorageRoot(this.storageRoot, sessionId);
       const store = new JSONLStore(filePath);
       await store.delete();
     } catch (error) {
@@ -543,7 +547,7 @@ export class PersistentStore {
       let totalSize = 0;
 
       for (const sessionId of sessions) {
-        const filePath = getSessionFilePath(this.projectPath, sessionId);
+        const filePath = getSessionFilePathFromStorageRoot(this.storageRoot, sessionId);
         const store = new JSONLStore(filePath);
         const stats = await store.getStats();
         totalSize += stats.size;
@@ -572,7 +576,7 @@ export class PersistentStore {
     error?: string;
   }> {
     try {
-      const storagePath = getProjectStoragePath(this.projectPath);
+      const storagePath = this.storageRoot;
 
       // 尝试创建目录
       await fs.mkdir(storagePath, { recursive: true, mode: 0o755 });
@@ -603,6 +607,6 @@ export class PersistentStore {
   }
 
   private getSessionStore(): JsonlSessionStore {
-    return new JsonlSessionStore(this.projectPath);
+    return new JsonlSessionStore(this.storageRoot);
   }
 }

@@ -1,3 +1,4 @@
+import type { ContextSnapshot } from '../../runtime/index.js';
 import { PermissionMode } from '../../types/common.js';
 
 /**
@@ -107,6 +108,7 @@ export interface SubagentContext {
   parentMessageId?: string;
   permissionMode?: PermissionMode;
   subagentSessionId?: string;
+  snapshot?: ContextSnapshot;
 }
 
 /**

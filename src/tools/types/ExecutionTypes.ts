@@ -1,3 +1,4 @@
+import type { ContextSnapshot } from '../../runtime/index.js';
 import type { BladeConfig, PermissionMode } from '../../types/common.js';
 import type { Tool, ToolInvocation, ToolResult } from './ToolTypes.js';
 import { ToolErrorType, type ToolKind } from './ToolTypes.js';
@@ -64,13 +65,17 @@ export interface ExecutionContext {
   userId?: string;
   sessionId?: string;
   messageId?: string;
-  workspaceRoot?: string;
+  contextSnapshot?: ContextSnapshot;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
   updateOutput?: (output: string) => void;
   confirmationHandler?: ConfirmationHandler;
   permissionMode?: PermissionMode;
   bladeConfig?: BladeConfig;
+}
+
+export function getEffectiveProjectDir(context: ExecutionContext): string {
+  return context.contextSnapshot?.cwd || process.cwd();
 }
 
 interface ToolExecutionInternalState {

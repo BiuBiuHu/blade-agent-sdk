@@ -6,7 +6,7 @@
 
 import { nanoid } from 'nanoid';
 import { PermissionMode } from '../types/common.js';
-import type { PipelineStage, ToolExecution } from '../tools/types/index.js';
+import { getEffectiveProjectDir, type PipelineStage, type ToolExecution } from '../tools/types/index.js';
 import { HookManager } from './HookManager.js';
 
 /**
@@ -42,7 +42,7 @@ export class HookStage implements PipelineStage {
       const toolUseId = execution.context.messageId || `tool_${nanoid()}`;
       execution._internal.hookToolUseId = toolUseId;
 
-      const projectDir = execution.context.workspaceRoot || process.cwd();
+      const projectDir = getEffectiveProjectDir(execution.context);
 
       const result = await this.hookManager.executePreToolHooks(
         tool.name,

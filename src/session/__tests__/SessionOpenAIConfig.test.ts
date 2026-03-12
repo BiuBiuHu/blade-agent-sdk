@@ -18,7 +18,14 @@ describe('Session OpenAI config', () => {
         projectId: 'proj-test',
       },
       model: 'gpt-5',
-      cwd: workspaceRoot,
+      defaultContext: {
+        capabilities: {
+          filesystem: {
+            roots: [workspaceRoot],
+            cwd: workspaceRoot,
+          },
+        },
+      },
     });
 
     const supportedModels = await session.supportedModels();

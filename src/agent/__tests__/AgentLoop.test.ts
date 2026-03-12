@@ -65,7 +65,6 @@ function baseConfig(overrides: Partial<AgentLoopConfig> = {}): AgentLoopConfig {
     executionContext: {
       sessionId: 'test-session',
       userId: 'test-user',
-      workspaceRoot: '/tmp/test',
     },
     ...overrides,
   };

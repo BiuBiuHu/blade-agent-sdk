@@ -14,6 +14,7 @@ import type {
   PipelineStage,
   ToolResult,
 } from '../types/index.js';
+import { getEffectiveProjectDir } from '../types/index.js';
 import { ToolErrorType } from '../types/ToolTypes.js';
 import { FileLockManager } from './FileLockManager.js';
 import {
@@ -222,7 +223,7 @@ export class ExecutionPipeline extends EventEmitter {
           execution.params,
           errorMsg,
           {
-            projectDir: process.cwd(),
+            projectDir: getEffectiveProjectDir(execution.context),
             sessionId: execution.context.sessionId || 'unknown',
             permissionMode: execution.context.permissionMode ?? PermissionMode.DEFAULT,
             isInterrupt: false,

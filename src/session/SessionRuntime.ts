@@ -25,6 +25,10 @@ import type { BladeConfig, McpServerConfig, PermissionsConfig } from '../types/c
 import { PermissionMode } from '../types/common.js';
 import { HookEvent } from '../types/constants.js';
 import type { CanUseTool, PermissionResult } from '../types/permissions.js';
+import type { ContextSnapshot, RuntimeContext } from '../runtime/index.js';
+import {
+  getContextCwd,
+} from '../runtime/index.js';
 import type { HookCallback, HookInput, HookOutput, McpServerStatus, McpToolInfo, SessionOptions } from './types.js';
 
 function isSdkMcpServerHandle(
@@ -54,12 +58,20 @@ export class SessionRuntime {
     private readonly options: SessionOptions,
     private readonly bladeConfig: BladeConfig,
     private readonly permissionMode: PermissionMode,
-    private readonly workspaceRoot: string,
+    private readonly defaultContext: RuntimeContext,
     logger: InternalLogger,
   ) {
     this.rootLogger = logger;
     this.logger = logger.child(LogCategory.AGENT);
-    this.contextManager = new ContextManager({ projectPath: workspaceRoot });
+    this.contextManager = new ContextManager({
+      storage: {
+        maxMemorySize: 1000,
+        persistentPath: options.storagePath,
+        cacheSize: 100,
+        compressionEnabled: true,
+      },
+      projectPath: getContextCwd(defaultContext),
+    });
     this.hookCallbacks = options.hooks || {};
     this.executionPipeline = this.createExecutionPipeline();
   }
@@ -68,7 +80,7 @@ export class SessionRuntime {
     return {
       executionPipeline: this.executionPipeline,
       contextManager: this.contextManager,
-      workspaceRoot: this.workspaceRoot,
+      defaultContext: this.defaultContext,
       mcpRegistry: this.mcpRegistry,
       runtimeManaged: true,
       logger: this.rootLogger,
@@ -108,6 +120,16 @@ export class SessionRuntime {
 
   async ensureSessionCreated(): Promise<void> {
     await this.contextManager.createSession(undefined, {}, { sessionId: this.sessionId });
+  }
+
+  prepareTurn(snapshot: ContextSnapshot): void {
+    this.contextManager.updateWorkspace({
+      projectPath: snapshot.cwd,
+      environment: {
+        ...snapshot.environment,
+        ...(snapshot.cwd ? { cwd: snapshot.cwd } : {}),
+      },
+    });
   }
 
   async close(): Promise<void> {

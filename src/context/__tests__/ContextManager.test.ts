@@ -15,7 +15,15 @@ describe('ContextManager', () => {
     const workspaceRoot = createWorkspaceRoot();
     const persistentStore = new PersistentStore(workspaceRoot);
     const sessionStore = new JsonlSessionStore(workspaceRoot);
-    const contextManager = new ContextManager({ projectPath: workspaceRoot });
+    const contextManager = new ContextManager({
+      projectPath: workspaceRoot,
+      storage: {
+        maxMemorySize: 1000,
+        persistentPath: workspaceRoot,
+        cacheSize: 100,
+        compressionEnabled: true,
+      },
+    });
 
     const sessionId = 'session-1';
     await persistentStore.saveMessage(sessionId, 'user', 'hello');

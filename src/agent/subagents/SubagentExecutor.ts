@@ -37,6 +37,15 @@ export class SubagentExecutor {
       const agent = await Agent.create(this.bladeConfig, {
         toolWhitelist: this.config.tools,
         modelId,
+      }, {
+        // When a parent snapshot exists, inherit its context verbatim, even if
+        // that context is intentionally empty. The legacy fallback only applies
+        // to out-of-band subagent execution with no parent snapshot at all. In
+        // that case, use an empty default context so subagents do not gain
+        // implicit filesystem access from process.cwd().
+        defaultContext: context.snapshot
+          ? context.snapshot.context
+          : {},
       });
 
       let finalMessage = '';
@@ -55,7 +64,7 @@ export class SubagentExecutor {
           messages: [],
           userId: 'subagent',
           sessionId: agentId,
-          workspaceRoot: process.cwd(),
+          snapshot: context.snapshot,
           permissionMode: context.permissionMode,
           systemPrompt,
           subagentInfo,

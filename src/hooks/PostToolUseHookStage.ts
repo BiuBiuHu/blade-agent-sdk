@@ -6,7 +6,7 @@
 
 import { nanoid } from 'nanoid';
 import { PermissionMode } from '../types/common.js';
-import type { PipelineStage, ToolExecution } from '../tools/types/index.js';
+import { getEffectiveProjectDir, type PipelineStage, type ToolExecution } from '../tools/types/index.js';
 import { HookManager } from './HookManager.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -53,7 +53,7 @@ export class PostToolUseHookStage implements PipelineStage {
         execution._internal.hookToolUseId ||
         execution.context.messageId ||
         `tool_${nanoid()}`;
-      const projectDir = execution.context.workspaceRoot || process.cwd();
+      const projectDir = getEffectiveProjectDir(execution.context);
 
       const hookResult = await this.hookManager.executePostToolHooks(
         tool.name,

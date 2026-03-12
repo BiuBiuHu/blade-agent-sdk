@@ -13,7 +13,15 @@ function createOptions(workspaceRoot: string) {
   return {
     provider: { type: 'openai-compatible' as const, apiKey: 'test-key' },
     model: 'gpt-4o-mini',
-    cwd: workspaceRoot,
+    defaultContext: {
+      capabilities: {
+        filesystem: {
+          roots: [workspaceRoot],
+          cwd: workspaceRoot,
+        },
+      },
+    },
+    storagePath: workspaceRoot,
   };
 }
 

@@ -77,8 +77,13 @@ export class ContextManager {
 
     // 初始化存储层
     this.memory = new MemoryStore(this.options.storage.maxMemorySize);
-    this.persistent = new PersistentStore(this.projectPath, 100);
-    this.sessionStore = new JsonlSessionStore(this.projectPath);
+    this.persistent = new PersistentStore(
+      this.options.storage.persistentPath,
+      100,
+      '0.0.10',
+      this.projectPath,
+    );
+    this.sessionStore = new JsonlSessionStore(this.options.storage.persistentPath);
     this.cache = new CacheStore(
       this.options.storage.cacheSize,
       5 * 60 * 1000 // 5分钟默认TTL
