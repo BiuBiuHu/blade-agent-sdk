@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to Blade Agent SDK! This document provides guidelines and standards for contributing to this project.
 
+The published package is distributed through npm, but this repository uses `bun` for local dependency installation, testing, build, and release automation.
+
 ## Code Standards
 
 ### TypeScript Strict Mode

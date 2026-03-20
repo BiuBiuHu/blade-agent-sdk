@@ -47,7 +47,7 @@ export default {
     // 发布前是否构建
     beforePublish: true,
     // 构建命令
-    command: 'npm run build',
+    command: 'bun run build',
   },
   
   // 发布配置

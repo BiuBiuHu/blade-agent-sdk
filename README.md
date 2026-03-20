@@ -15,9 +15,13 @@
 
 ## 安装
 
+用于在你的应用中安装已发布到 npm 的包：
+
 ```bash
 npm install @blade-ai/agent-sdk
 ```
+
+如果你是要参与本仓库开发，请查看 `CONTRIBUTING.md`。仓库本身的依赖安装、测试和发布脚本使用 `bun`。
 
 ## 快速开始
 

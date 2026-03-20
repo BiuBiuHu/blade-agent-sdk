@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import chalk from 'chalk';
 import { execSync } from 'child_process';
@@ -46,11 +46,7 @@ function exec(command, options = {}) {
 function findRepoRoot(startDir) {
   let dir = startDir;
   while (dir && dir !== dirname(dir)) {
-    if (
-      existsSync(join(dir, 'pnpm-lock.yaml')) ||
-      existsSync(join(dir, 'yarn.lock')) ||
-      existsSync(join(dir, 'package-lock.json'))
-    ) {
+    if (existsSync(join(dir, 'bun.lock')) && existsSync(join(dir, 'package.json'))) {
       return dir;
     }
     dir = dirname(dir);
@@ -61,14 +57,7 @@ function findRepoRoot(startDir) {
 const repoRoot = findRepoRoot(packageDir);
 const packageJsonRelPath = relative(repoRoot, packageJsonPath);
 const changelogRelPath = relative(repoRoot, changelogPath);
-
-function detectPackageManager() {
-  if (existsSync(join(repoRoot, 'pnpm-lock.yaml'))) return 'pnpm';
-  if (existsSync(join(repoRoot, 'yarn.lock'))) return 'yarn';
-  return 'npm';
-}
-
-const packageManager = detectPackageManager();
+const packageManager = 'bun';
 
 console.log(chalk.blue('🚀 agent-sdk 发布脚本'));
 console.log(chalk.gray(`当前版本: ${currentVersion}`));
@@ -131,11 +120,17 @@ function incrementVersion(version, type) {
 }
 
 async function checkNpmVersion() {
-  const npmInfo = exec(`npm view ${packageJson.name} version --registry ${npmRegistry}`, {
-    allowFailure: true,
-    allowInDryRun: true,
-  });
-  return npmInfo || null;
+  const packageName = encodeURIComponent(packageJson.name);
+  const response = await fetch(`${npmRegistry}${packageName}`, {
+    headers: { Accept: 'application/json' },
+  }).catch(() => null);
+
+  if (!response || !response.ok) {
+    return null;
+  }
+
+  const npmInfo = await response.json();
+  return npmInfo?.['dist-tags']?.latest || null;
 }
 
 async function determineNewVersion() {
@@ -251,8 +246,8 @@ function commitAndTag(newVersion) {
 
 function publishToNpm() {
   console.log(chalk.blue('\n📋 步骤 8: 发布到 NPM'));
-  console.log(chalk.gray(`  执行: npm publish --access public --registry ${npmRegistry}`));
-  exec(`npm publish --access public --registry ${npmRegistry}`);
+  console.log(chalk.gray(`  执行: bun publish --access public --registry ${npmRegistry}`));
+  exec(`bun publish --access public --registry `);
   console.log(chalk.green('  ✓ 已发布到 NPM'));
 }
 
