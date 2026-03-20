@@ -247,7 +247,7 @@ function commitAndTag(newVersion) {
 function publishToNpm() {
   console.log(chalk.blue('\n📋 步骤 8: 发布到 NPM'));
   console.log(chalk.gray(`  执行: bun publish --access public --registry ${npmRegistry}`));
-  exec(`bun publish --access public --registry `);
+  exec(`bun publish --access public --registry ${npmRegistry}`);
   console.log(chalk.green('  ✓ 已发布到 NPM'));
 }
 
