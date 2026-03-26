@@ -2,6 +2,22 @@
 
 本文件记录 @blade-ai/agent-sdk 的所有重要变更。
 
+## [0.2.0] - 2026-03-26
+
+- 7f20f3f feat(hooks): 扩展hook系统支持更多事件类型和控制流
+- 5d29870 feat(skills): 增强技能系统功能并添加内联命令支持
+- 6a84c05 refactor(skills): 移除内置skill-creator及相关逻辑
+- 1fd3b8e refactor(skills): 移除 SkillInstaller 并简化技能加载逻辑
+- 8816878 refactor(version): 移除版本检查服务及相关功能
+- fd55a4d refactor(storage): 重构存储系统以支持自定义存储根目录
+- 65128d3 refactor(chat-service): 移除内置API Key相关功能
+- 3d3ee79 refactor(prompts): 重构系统提示构建逻辑，移除默认提示
+- db00d74 chore: release v0.1.19
+- dbc37a3 fix: pass registry to bun publish
+- 99e9e7d chore: release v0.1.18
+- 55242a6 fix: stabilize concurrent session logger routing
+- 8e8f57c chore: switch repo workflow to bun
+- a1d1de3 feat(session): 支持禁用会话持久化模式
 ## [0.1.19] - 2026-03-20
 
 - dbc37a3 fix: pass registry to bun publish
