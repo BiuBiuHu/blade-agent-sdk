@@ -251,12 +251,13 @@ function publishToNpm() {
   console.log(chalk.green('  ✓ 已发布到 NPM'));
 }
 
-function pushToRemote() {
+function pushToRemote(newVersion) {
+  const tag = `${tagPrefix}${newVersion}`;
   console.log(chalk.blue('\n📋 步骤 9: 推送到远程仓库'));
   console.log(chalk.gray('  执行: git push'));
   exec('git push', { cwd: repoRoot });
-  console.log(chalk.gray('  执行: git push --tags'));
-  exec('git push --tags', { cwd: repoRoot });
+  console.log(chalk.gray(`  执行: git push origin ${tag}`));
+  exec(`git push origin ${tag}`, { cwd: repoRoot });
   console.log(chalk.green('  ✓ 已推送到远程仓库'));
 }
 
@@ -275,7 +276,7 @@ async function main() {
     }
     commitAndTag(newVersion);
     publishToNpm();
-    pushToRemote();
+    pushToRemote(newVersion);
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(chalk.green(`\n✅ 已发布 ${packageJson.name}@${newVersion} (耗时 ${duration}s)`));
   } catch (error) {
