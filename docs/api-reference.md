@@ -24,7 +24,7 @@
 
 | 名称 | 值 |
 |------|------|
-| `PermissionMode` | `DEFAULT` / `AUTO_EDIT` / `YOLO` / `BYPASSALL` / `PLAN` |
+| `PermissionMode` | `DEFAULT` / `AUTO_EDIT` / `YOLO` / `PLAN` |
 | `HookEvent` | `SessionStart` / `SessionEnd` / `UserPromptSubmit` / `PermissionRequest` / `PreToolUse` / `PostToolUse` / `PostToolUseFailure` / `TaskCompleted` 等 |
 | `ToolKind` | `READONLY` / `WRITE` / `EXECUTE` |
 | `StreamMessageType` | `TURN_START` / `TURN_END` / `CONTENT` / `THINKING` / `TOOL_USE` / `TOOL_RESULT` / `USAGE` / `RESULT` / `ERROR` |

@@ -928,11 +928,10 @@ const PermissionMode = {
   DEFAULT: 'default',
   AUTO_EDIT: 'autoEdit',
   YOLO: 'yolo',
-  BYPASSALL: 'bypassAll',
   PLAN: 'plan',
 } as const;
 
-type PermissionMode = 'default' | 'autoEdit' | 'yolo' | 'bypassAll' | 'plan';
+type PermissionMode = 'default' | 'autoEdit' | 'yolo' | 'plan';
 ```
 
 | 模式             | 值             | 说明                        |
@@ -940,7 +939,6 @@ type PermissionMode = 'default' | 'autoEdit' | 'yolo' | 'bypassAll' | 'plan';
 | **DEFAULT**    | `'default'`   | 标准模式，写入/执行类工具需要审批         |
 | **AUTO\_EDIT** | `'autoEdit'`  | 自动批准文件编辑（write），但命令执行仍需审批 |
 | **YOLO**       | `'yolo'`      | 自动批准所有工具调用，不再询问           |
-| **BYPASSALL**  | `'bypassAll'` | 绕过所有权限检查                  |
 | **PLAN**       | `'plan'`      | 计划模式——只规划不执行，生成实施方案       |
 
 ### 在创建会话时设置

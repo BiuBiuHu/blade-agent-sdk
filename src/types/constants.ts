@@ -12,7 +12,6 @@ export const PermissionMode = {
   DEFAULT: 'default',
   AUTO_EDIT: 'autoEdit',
   YOLO: 'yolo',
-  BYPASSALL: 'bypassAll',
   PLAN: 'plan',
 } as const;
 
