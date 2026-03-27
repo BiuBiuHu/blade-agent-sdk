@@ -8,6 +8,7 @@ const capturedContexts: unknown[] = [];
 const createAgent = mock(async () => ({
   async *streamChat(_message: string, context: unknown) {
     capturedContexts.push(context);
+    yield { type: 'turn_start', turn: 1 };
     return {
       success: true,
       finalMessage: 'ok',

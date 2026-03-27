@@ -66,332 +66,304 @@ export interface CompactionResult {
   error?: string;
 }
 
+/** 压缩阈值百分比（80%） */
+const THRESHOLD_PERCENT = 0.8;
+
+/** 保留比例（20%） */
+const RETAIN_PERCENT = 0.2;
+
+/** 降级时保留比例（30%） */
+const FALLBACK_RETAIN_PERCENT = 0.3;
+
 /**
- * Compaction Service - 上下文压缩服务
+ * 执行压缩
+ *
+ * @param messages - 消息列表
+ * @param options - 压缩选项
+ * @returns 压缩结果
  */
-export class CompactionService {
-  /** 压缩阈值百分比（80%） */
-  private static readonly THRESHOLD_PERCENT = 0.8;
+export async function compact(
+  messages: Message[],
+  options: CompactionOptions
+): Promise<CompactionResult> {
+  const preTokens =
+    options.actualPreTokens ?? TokenCounter.countTokens(messages, options.modelName);
+  const tokenSource = options.actualPreTokens
+    ? 'actual (from LLM usage)'
+    : 'estimated';
+  console.log(`[CompactionService] preTokens source: ${tokenSource}`);
 
-  /** 保留比例（20%） */
-  private static readonly RETAIN_PERCENT = 0.2;
-
-  /** 降级时保留比例（30%） */
-  private static readonly FALLBACK_RETAIN_PERCENT = 0.3;
-
-  /**
-   * 执行压缩
-   *
-   * @param messages - 消息列表
-   * @param options - 压缩选项
-   * @returns 压缩结果
-   */
-  static async compact(
-    messages: Message[],
-    options: CompactionOptions
-  ): Promise<CompactionResult> {
-    // 优先使用传入的真实 preTokens（来自 LLM usage），否则使用估算
-    const preTokens =
-      options.actualPreTokens ?? TokenCounter.countTokens(messages, options.modelName);
-    const tokenSource = options.actualPreTokens
-      ? 'actual (from LLM usage)'
-      : 'estimated';
-    console.log(`[CompactionService] preTokens source: ${tokenSource}`);
-
-    // 执行 PreCompact Hook（压缩前）— 新版 hook，与旧版 Compaction 并存
-    // Hook 可以阻止压缩
-    if (options.projectDir) {
-      try {
-      const hookManager = HookManager.getInstance();
-
-      // 优先使用 PreCompact hook，同时保留旧版 Compaction hook 兼容
-      const preCompactResult = await hookManager.executePreCompactHooks(
-        {
-          trigger: options.trigger,
-          messages_before: messages.length,
-          tokens_before: preTokens,
-        },
-        options.projectDir,
-        options.sessionId || 'unknown',
-        options.permissionMode || PermissionMode.DEFAULT,
-      );
-
-      if (preCompactResult.blockCompaction) {
-        console.log(
-          `[CompactionService] PreCompact hook 阻止压缩: ${preCompactResult.blockReason || '(无原因)'}`
-        );
-        return {
-          success: false,
-          summary: '',
-          preTokens,
-          postTokens: preTokens,
-          filesIncluded: [],
-          compactedMessages: messages,
-          boundaryMessage: { role: 'system', content: '' },
-          summaryMessage: { role: 'user', content: '' },
-          error: preCompactResult.blockReason || 'Compaction blocked by PreCompact hook',
-        };
-      }
-      if (preCompactResult.warning) {
-        console.warn(`[CompactionService] PreCompact hook warning: ${preCompactResult.warning}`);
-      }
-
-      // 旧版 Compaction hook（向后兼容）
-      const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
-        projectDir: options.projectDir,
-        sessionId: options.sessionId || 'unknown',
-        permissionMode: options.permissionMode || PermissionMode.DEFAULT,
-        messagesBefore: messages.length,
-        tokensBefore: preTokens,
-      });
-
-      // 如果 hook 返回 blockCompaction: true，阻止压缩
-      if (hookResult.blockCompaction) {
-        console.log(
-          `[CompactionService] Compaction hook 阻止压缩: ${hookResult.blockReason || '(无原因)'}`
-        );
-        return {
-          success: false,
-          summary: '',
-          preTokens,
-          postTokens: preTokens,
-          filesIncluded: [],
-          compactedMessages: messages,
-          boundaryMessage: { role: 'system', content: '' },
-          summaryMessage: { role: 'user', content: '' },
-          error: hookResult.blockReason || 'Compaction blocked by hook',
-        };
-      }
-
-      // 如果有警告，记录日志
-      if (hookResult.warning) {
-        console.warn(
-          `[CompactionService] Compaction hook warning: ${hookResult.warning}`
-        );
-      }
-      } catch (hookError) {
-        // Hook 执行失败不应阻止压缩
-        console.warn('[CompactionService] Compaction hook execution failed:', hookError);
-      }
-    }
-
+  if (options.projectDir) {
     try {
-      console.log('[CompactionService] 开始压缩，消息数:', messages.length);
-      console.log('[CompactionService] 压缩前 tokens:', preTokens);
+    const hookManager = HookManager.getInstance();
 
-      // 1. 分析并读取重点文件
-      const fileRefs = FileAnalyzer.analyzeFiles(messages);
-      const filePaths = fileRefs.map((f) => f.path);
-      console.log('[CompactionService] 提取重点文件:', filePaths);
-
-      const fileContents = await FileAnalyzer.readFilesContent(filePaths);
-      console.log('[CompactionService] 成功读取文件:', fileContents.length);
-
-      // 2. 生成总结
-      const summary = await CompactionService.generateSummary(messages, fileContents, options);
-      console.log('[CompactionService] 生成总结，长度:', summary.length);
-
-      // 3. 计算保留范围并过滤孤儿 tool 消息
-      const retainCount = Math.ceil(messages.length * CompactionService.RETAIN_PERCENT);
-      const candidateMessages = messages.slice(-retainCount);
-
-      // 收集保留消息中所有 tool_call 的 ID
-      const availableToolCallIds = new Set<string>();
-      for (const msg of candidateMessages) {
-        if (msg.role === 'assistant' && msg.tool_calls) {
-          for (const tc of msg.tool_calls) {
-            availableToolCallIds.add(tc.id);
-          }
-        }
-      }
-
-      // 过滤掉孤儿 tool 消息（tool_call_id 对应的 assistant 消息已被压缩）
-      const retainedMessages = candidateMessages.filter((msg) => {
-        if (msg.role === 'tool' && msg.tool_call_id) {
-          return availableToolCallIds.has(msg.tool_call_id);
-        }
-        return true; // 保留其他所有消息
-      });
-
-      console.log('[CompactionService] 保留消息数:', retainCount);
-      console.log('[CompactionService] 过滤后保留消息数:', retainedMessages.length);
-
-      // 4. 创建压缩消息
-      const boundaryMessageId = nanoid();
-      const boundaryMessage = CompactionService.createBoundaryMessage(
-        boundaryMessageId,
-        options.trigger,
-        preTokens
-      );
-
-      const summaryMessageId = nanoid();
-      const summaryMessage = CompactionService.createSummaryMessage(summaryMessageId, summary);
-
-      // 5. 构建新消息列表（用于发送给 LLM）
-      const compactedMessages = [summaryMessage, ...retainedMessages];
-      const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
-
-      console.log('[CompactionService] 压缩完成！');
-      console.log(
-        '[CompactionService] Token 变化:',
-        preTokens,
-        '→',
-        postTokens,
-        `(-${((1 - postTokens / preTokens) * 100).toFixed(1)}%)`
-      );
-
-      // 执行 PostCompact Hook（压缩后）
-      if (options.projectDir) {
-        try {
-          const postHookManager = HookManager.getInstance();
-          const postHookResult = await postHookManager.executePostCompactHooks(
-            {
-              trigger: options.trigger,
-              messages_before: messages.length,
-              messages_after: compactedMessages.length,
-              tokens_before: preTokens,
-              tokens_after: postTokens,
-              summary,
-            },
-            options.projectDir,
-            options.sessionId || 'unknown',
-            options.permissionMode || PermissionMode.DEFAULT,
-          );
-          if (postHookResult.warning) {
-            console.warn(`[CompactionService] PostCompact hook warning: ${postHookResult.warning}`);
-          }
-        } catch (hookError) {
-          console.warn('[CompactionService] PostCompact hook execution failed:', hookError);
-        }
-      }
-
-      return {
-        success: true,
-        summary,
-        preTokens,
-        postTokens,
-        filesIncluded: filePaths,
-        compactedMessages,
-        boundaryMessage,
-        summaryMessage,
-      };
-    } catch (error) {
-      console.error('[CompactionService] 压缩失败，使用降级策略', error);
-      return CompactionService.fallbackCompact(messages, options, preTokens, error);
-    }
-  }
-
-  /**
-   * 生成总结（调用 LLM）
-   *
-   * @param messages - 消息列表
-   * @param fileContents - 文件内容列表
-   * @param options - 压缩选项
-   * @returns 总结内容
-   */
-  private static async generateSummary(
-    messages: Message[],
-    fileContents: FileContent[],
-    options: CompactionOptions
-  ): Promise<string> {
-    const prompt = CompactionService.buildCompactionPrompt(messages, fileContents);
-    const baseURL =
-      options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1';
-
-    console.log('[CompactionService] 使用压缩模型:', options.modelName);
-
-    // 创建 ChatService
-    const chatService = await createChatServiceAsync({
-      apiKey: options.apiKey || process.env.BLADE_API_KEY || '',
-      baseUrl: baseURL,
-      model: options.modelName,
-      temperature: 0.3,
-      maxOutputTokens: 8000, // 压缩输出限制
-      timeout: 60000,
-      provider: options.provider || CompactionService.inferProvider(baseURL),
-      customHeaders: options.customHeaders,
-    }, NOOP_LOGGER);
-
-    const response = await chatService.chat(
-      [{ role: 'user', content: prompt }]
-      // 不传递工具参数（使用默认空数组）
+    const preCompactResult = await hookManager.executePreCompactHooks(
+      {
+        trigger: options.trigger,
+        messages_before: messages.length,
+        tokens_before: preTokens,
+      },
+      options.projectDir,
+      options.sessionId || 'unknown',
+      options.permissionMode || PermissionMode.DEFAULT,
     );
 
-    // 提取 <summary> 标签内容
-    const content = response.content || '';
-    const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/);
-
-    if (!summaryMatch) {
-      console.warn('[CompactionService] 总结格式不正确，使用完整响应');
-      // 如果没有找到标签，返回完整响应
-      return content;
+    if (preCompactResult.blockCompaction) {
+      console.log(
+        `[CompactionService] PreCompact hook 阻止压缩: ${preCompactResult.blockReason || '(无原因)'}`
+      );
+      return {
+        success: false,
+        summary: '',
+        preTokens,
+        postTokens: preTokens,
+        filesIncluded: [],
+        compactedMessages: messages,
+        boundaryMessage: { role: 'system', content: '' },
+        summaryMessage: { role: 'user', content: '' },
+        error: preCompactResult.blockReason || 'Compaction blocked by PreCompact hook',
+      };
+    }
+    if (preCompactResult.warning) {
+      console.warn(`[CompactionService] PreCompact hook warning: ${preCompactResult.warning}`);
     }
 
-    return summaryMatch[1].trim();
+    const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
+      projectDir: options.projectDir,
+      sessionId: options.sessionId || 'unknown',
+      permissionMode: options.permissionMode || PermissionMode.DEFAULT,
+      messagesBefore: messages.length,
+      tokensBefore: preTokens,
+    });
+
+    if (hookResult.blockCompaction) {
+      console.log(
+        `[CompactionService] Compaction hook 阻止压缩: ${hookResult.blockReason || '(无原因)'}`
+      );
+      return {
+        success: false,
+        summary: '',
+        preTokens,
+        postTokens: preTokens,
+        filesIncluded: [],
+        compactedMessages: messages,
+        boundaryMessage: { role: 'system', content: '' },
+        summaryMessage: { role: 'user', content: '' },
+        error: hookResult.blockReason || 'Compaction blocked by hook',
+      };
+    }
+
+    if (hookResult.warning) {
+      console.warn(
+        `[CompactionService] Compaction hook warning: ${hookResult.warning}`
+      );
+    }
+    } catch (hookError) {
+      console.warn('[CompactionService] Compaction hook execution failed:', hookError);
+    }
   }
 
-  private static inferProvider(baseURL?: string): ProviderType {
-    if (!baseURL) {
-      return 'openai';
+  try {
+    console.log('[CompactionService] 开始压缩，消息数:', messages.length);
+    console.log('[CompactionService] 压缩前 tokens:', preTokens);
+
+    const fileRefs = FileAnalyzer.analyzeFiles(messages);
+    const filePaths = fileRefs.map((f) => f.path);
+    console.log('[CompactionService] 提取重点文件:', filePaths);
+
+    const fileContents = await FileAnalyzer.readFilesContent(filePaths);
+    console.log('[CompactionService] 成功读取文件:', fileContents.length);
+
+    const summary = await generateSummary(messages, fileContents, options);
+    console.log('[CompactionService] 生成总结，长度:', summary.length);
+
+    const retainCount = Math.ceil(messages.length * RETAIN_PERCENT);
+    const candidateMessages = messages.slice(-retainCount);
+
+    const availableToolCallIds = new Set<string>();
+    for (const msg of candidateMessages) {
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          availableToolCallIds.add(tc.id);
+        }
+      }
     }
 
-    const normalized = baseURL.toLowerCase();
-    if (normalized.includes('api.openai.com')) {
-      return 'openai';
+    const retainedMessages = candidateMessages.filter((msg) => {
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        return availableToolCallIds.has(msg.tool_call_id);
+      }
+      return true;
+    });
+
+    console.log('[CompactionService] 保留消息数:', retainCount);
+    console.log('[CompactionService] 过滤后保留消息数:', retainedMessages.length);
+
+    const boundaryMessageId = nanoid();
+    const boundaryMessage = createBoundaryMessage(
+      boundaryMessageId,
+      options.trigger,
+      preTokens
+    );
+
+    const summaryMessageId = nanoid();
+    const summaryMessage = createSummaryMessage(summaryMessageId, summary);
+
+    const compactedMessages = [summaryMessage, ...retainedMessages];
+    const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
+
+    console.log('[CompactionService] 压缩完成！');
+    console.log(
+      '[CompactionService] Token 变化:',
+      preTokens,
+      '→',
+      postTokens,
+      `(-${((1 - postTokens / preTokens) * 100).toFixed(1)}%)`
+    );
+
+    if (options.projectDir) {
+      try {
+        const postHookManager = HookManager.getInstance();
+        const postHookResult = await postHookManager.executePostCompactHooks(
+          {
+            trigger: options.trigger,
+            messages_before: messages.length,
+            messages_after: compactedMessages.length,
+            tokens_before: preTokens,
+            tokens_after: postTokens,
+            summary,
+          },
+          options.projectDir,
+          options.sessionId || 'unknown',
+          options.permissionMode || PermissionMode.DEFAULT,
+        );
+        if (postHookResult.warning) {
+          console.warn(`[CompactionService] PostCompact hook warning: ${postHookResult.warning}`);
+        }
+      } catch (hookError) {
+        console.warn('[CompactionService] PostCompact hook execution failed:', hookError);
+      }
     }
-    if (normalized.includes('.openai.azure')) {
-      return 'azure-openai';
-    }
-    if (normalized.includes('api.anthropic.com')) {
-      return 'anthropic';
-    }
-    if (
-      normalized.includes('generativelanguage.googleapis.com')
-      || normalized.includes('aiplatform.googleapis.com')
-    ) {
-      return 'gemini';
-    }
-    return 'openai-compatible';
+
+    return {
+      success: true,
+      summary,
+      preTokens,
+      postTokens,
+      filesIncluded: filePaths,
+      compactedMessages,
+      boundaryMessage,
+      summaryMessage,
+    };
+  } catch (error) {
+    console.error('[CompactionService] 压缩失败，使用降级策略', error);
+    return fallbackCompact(messages, options, preTokens, error);
+  }
+}
+
+/**
+ * 生成总结（调用 LLM）
+ *
+ * @param messages - 消息列表
+ * @param fileContents - 文件内容列表
+ * @param options - 压缩选项
+ * @returns 总结内容
+ */
+async function generateSummary(
+  messages: Message[],
+  fileContents: FileContent[],
+  options: CompactionOptions
+): Promise<string> {
+  const prompt = buildCompactionPrompt(messages, fileContents);
+  const baseURL =
+    options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1';
+
+  console.log('[CompactionService] 使用压缩模型:', options.modelName);
+
+  const chatService = await createChatServiceAsync({
+    apiKey: options.apiKey || process.env.BLADE_API_KEY || '',
+    baseUrl: baseURL,
+    model: options.modelName,
+    temperature: 0.3,
+    maxOutputTokens: 8000,
+    timeout: 60000,
+    provider: options.provider || inferProvider(baseURL),
+    customHeaders: options.customHeaders,
+  }, NOOP_LOGGER);
+
+  const response = await chatService.chat(
+    [{ role: 'user', content: prompt }]
+  );
+
+  const content = response.content || '';
+  const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/);
+
+  if (!summaryMatch) {
+    console.warn('[CompactionService] 总结格式不正确，使用完整响应');
+    return content;
   }
 
-  /**
-   * 构建压缩 prompt
-   *
-   * @param messages - 消息列表
-   * @param fileContents - 文件内容列表
-   * @returns 压缩 prompt
-   */
-  private static buildCompactionPrompt(
-    messages: Message[],
-    fileContents: FileContent[]
-  ): string {
-    // 格式化消息历史
-    const messagesText = messages
-      .map((msg, i) => {
-        const role = msg.role || 'unknown';
-        const content =
-          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+  return summaryMatch[1].trim();
+}
 
-        // 如果消息太长，截断
-        const maxLength = 5000;
-        const truncatedContent =
-          content.length > maxLength
-            ? content.substring(0, maxLength) + '...'
-            : content;
+function inferProvider(baseURL?: string): ProviderType {
+  if (!baseURL) {
+    return 'openai';
+  }
 
-        return `[${i + 1}] ${role}: ${truncatedContent}`;
-      })
-      .join('\n\n');
+  const normalized = baseURL.toLowerCase();
+  if (normalized.includes('api.openai.com')) {
+    return 'openai';
+  }
+  if (normalized.includes('.openai.azure')) {
+    return 'azure-openai';
+  }
+  if (normalized.includes('api.anthropic.com')) {
+    return 'anthropic';
+  }
+  if (
+    normalized.includes('generativelanguage.googleapis.com')
+    || normalized.includes('aiplatform.googleapis.com')
+  ) {
+    return 'gemini';
+  }
+  return 'openai-compatible';
+}
 
-    // 格式化文件内容
-    const filesText = fileContents
-      .map((file) => {
-        return `### ${file.path}\n\`\`\`\n${file.content}\n\`\`\``;
-      })
-      .join('\n\n');
+/**
+ * 构建压缩 prompt
+ *
+ * @param messages - 消息列表
+ * @param fileContents - 文件内容列表
+ * @returns 压缩 prompt
+ */
+function buildCompactionPrompt(
+  messages: Message[],
+  fileContents: FileContent[]
+): string {
+  const messagesText = messages
+    .map((msg, i) => {
+      const role = msg.role || 'unknown';
+      const content =
+        typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
 
-    // 基础 prompt（用户提供的）
-    const basePrompt = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
+      const maxLength = 5000;
+      const truncatedContent =
+        content.length > maxLength
+          ? content.substring(0, maxLength) + '...'
+          : content;
+
+      return `[${i + 1}] ${role}: ${truncatedContent}`;
+    })
+    .join('\n\n');
+
+  const filesText = fileContents
+    .map((file) => {
+      return `### ${file.path}\n\`\`\`\n${file.content}\n\`\`\``;
+    })
+    .join('\n\n');
+
+  const basePrompt = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
 This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.
 
 Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
@@ -421,7 +393,7 @@ Your summary should include the following sections:
 8. Current Work: Describe in detail precisely what was being worked on immediately before this summary request, paying special attention to the most recent messages from both user and assistant. Include file names and code snippets where applicable.
 9. Optional Next Step: List the next step that you will take that is related to the most recent work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's most recent explicit requests, and the task you were working on immediately before this summary request.`;
 
-    return `${basePrompt}
+  return `${basePrompt}
 
 ## Conversation History
 
@@ -430,125 +402,124 @@ ${messagesText}
 ${fileContents.length > 0 ? `## Important Files\n\n${filesText}` : ''}
 
 Please provide your summary following the structure specified above, with both <analysis> and <summary> sections.`;
-  }
+}
 
-  /**
-   * 创建 compact_boundary 消息
-   *
-   * @param parentId - 父消息 ID
-   * @param trigger - 触发方式
-   * @param preTokens - 压缩前 token 数
-   * @returns boundary 消息
-   */
-  private static createBoundaryMessage(
-    parentId: string,
-    trigger: 'auto' | 'manual',
-    preTokens: number
-  ): Message {
-    return {
-      id: nanoid(),
-      role: 'system',
-      content: 'Conversation compacted',
-      metadata: {
-        type: 'system',
-        subtype: 'compact_boundary',
-        parentId,
-        compactMetadata: {
-          trigger,
-          preTokens,
-        },
+/**
+ * 创建 compact_boundary 消息
+ *
+ * @param parentId - 父消息 ID
+ * @param trigger - 触发方式
+ * @param preTokens - 压缩前 token 数
+ * @returns boundary 消息
+ */
+function createBoundaryMessage(
+  parentId: string,
+  trigger: 'auto' | 'manual',
+  preTokens: number
+): Message {
+  return {
+    id: nanoid(),
+    role: 'system',
+    content: 'Conversation compacted',
+    metadata: {
+      type: 'system',
+      subtype: 'compact_boundary',
+      parentId,
+      compactMetadata: {
+        trigger,
+        preTokens,
       },
-    };
-  }
+    },
+  };
+}
 
-  /**
-   * 创建 summary 消息
-   *
-   * @param parentId - 父消息 ID（compact_boundary 的 ID）
-   * @param summary - 总结内容
-   * @returns summary 消息
-   */
-  private static createSummaryMessage(parentId: string, summary: string): Message {
-    return {
-      id: nanoid(),
-      role: 'user',
-      content: summary,
-      metadata: {
-        parentId,
-        isCompactSummary: true,
-      },
-    };
-  }
+/**
+ * 创建 summary 消息
+ *
+ * @param parentId - 父消息 ID（compact_boundary 的 ID）
+ * @param summary - 总结内容
+ * @returns summary 消息
+ */
+function createSummaryMessage(parentId: string, summary: string): Message {
+  return {
+    id: nanoid(),
+    role: 'user',
+    content: summary,
+    metadata: {
+      parentId,
+      isCompactSummary: true,
+    },
+  };
+}
 
-  /**
-   * 降级策略：简单截断
-   *
-   * @param messages - 消息列表
-   * @param options - 压缩选项
-   * @param preTokens - 压缩前 token 数
-   * @param error - 错误信息
-   * @returns 压缩结果
-   */
-  private static fallbackCompact(
-    messages: Message[],
-    options: CompactionOptions,
-    preTokens: number,
-    error: unknown
-  ): CompactionResult {
-    const retainCount = Math.ceil(messages.length * CompactionService.FALLBACK_RETAIN_PERCENT);
-    const candidateMessages = messages.slice(-retainCount);
+/**
+ * 降级策略：简单截断
+ *
+ * @param messages - 消息列表
+ * @param options - 压缩选项
+ * @param preTokens - 压缩前 token 数
+ * @param error - 错误信息
+ * @returns 压缩结果
+ */
+function fallbackCompact(
+  messages: Message[],
+  options: CompactionOptions,
+  preTokens: number,
+  error: unknown
+): CompactionResult {
+  const retainCount = Math.ceil(messages.length * FALLBACK_RETAIN_PERCENT);
+  const candidateMessages = messages.slice(-retainCount);
 
-    // 收集保留消息中所有 tool_call 的 ID
-    const availableToolCallIds = new Set<string>();
-    for (const msg of candidateMessages) {
-      if (msg.role === 'assistant' && msg.tool_calls) {
-        for (const tc of msg.tool_calls) {
-          availableToolCallIds.add(tc.id);
-        }
+  const availableToolCallIds = new Set<string>();
+  for (const msg of candidateMessages) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        availableToolCallIds.add(tc.id);
       }
     }
-
-    // 过滤掉孤儿 tool 消息
-    const retainedMessages = candidateMessages.filter((msg) => {
-      if (msg.role === 'tool' && msg.tool_call_id) {
-        return availableToolCallIds.has(msg.tool_call_id);
-      }
-      return true;
-    });
-
-    const boundaryMessageId = nanoid();
-    const boundaryMessage = CompactionService.createBoundaryMessage(
-      boundaryMessageId,
-      options.trigger,
-      preTokens
-    );
-
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const summaryMessageId = nanoid();
-    const summaryMessage = CompactionService.createSummaryMessage(
-      summaryMessageId,
-      `[Automatic compaction failed; using fallback]\n\nAn error occurred during compaction. Retained the latest ${retainCount} messages (~30%).\n\nError: ${errorMsg}\n\nThe conversation can continue, but consider retrying compaction later with /compact.`
-    );
-
-    const compactedMessages = [summaryMessage, ...retainedMessages];
-    const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
-
-    return {
-      success: false,
-      summary:
-        typeof summaryMessage.content === 'string'
-          ? summaryMessage.content
-          : summaryMessage.content
-              .filter((p) => p.type === 'text')
-              .map((p) => (p as { text: string }).text)
-              .join('\n'),
-      preTokens,
-      postTokens,
-      filesIncluded: [],
-      compactedMessages,
-      boundaryMessage,
-      summaryMessage,
-      error: errorMsg,
-    };
   }
+
+  const retainedMessages = candidateMessages.filter((msg) => {
+    if (msg.role === 'tool' && msg.tool_call_id) {
+      return availableToolCallIds.has(msg.tool_call_id);
+    }
+    return true;
+  });
+
+  const boundaryMessageId = nanoid();
+  const boundaryMessage = createBoundaryMessage(
+    boundaryMessageId,
+    options.trigger,
+    preTokens
+  );
+
+  const errorMsg = error instanceof Error ? error.message : String(error);
+  const summaryMessageId = nanoid();
+  const summaryMessage = createSummaryMessage(
+    summaryMessageId,
+    `[Automatic compaction failed; using fallback]\n\nAn error occurred during compaction. Retained the latest ${retainCount} messages (~30%).\n\nError: ${errorMsg}\n\nThe conversation can continue, but consider retrying compaction later with /compact.`
+  );
+
+  const compactedMessages = [summaryMessage, ...retainedMessages];
+  const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
+
+  return {
+    success: false,
+    summary:
+      typeof summaryMessage.content === 'string'
+        ? summaryMessage.content
+        : summaryMessage.content
+            .filter((p) => p.type === 'text')
+            .map((p) => (p as { text: string }).text)
+            .join('\n'),
+    preTokens,
+    postTokens,
+    filesIncluded: [],
+    compactedMessages,
+    boundaryMessage,
+    summaryMessage,
+    error: errorMsg,
+  };
 }
+
+export const CompactionService = { compact };

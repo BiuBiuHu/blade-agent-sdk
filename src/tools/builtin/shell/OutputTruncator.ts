@@ -122,116 +122,116 @@ const COMMAND_PATTERNS: Array<{
   },
 ];
 
-export class OutputTruncator {
-  private static getConfigForCommand(
-    command: string
-  ): { config: TruncationConfig; summaryTemplate?: (lines: number, chars: number) => string } {
-    for (const { pattern, config, summaryTemplate } of COMMAND_PATTERNS) {
-      if (pattern.test(command)) {
-        return { config, summaryTemplate };
-      }
+function getConfigForCommand(
+  command: string
+): { config: TruncationConfig; summaryTemplate?: (lines: number, chars: number) => string } {
+  for (const { pattern, config, summaryTemplate } of COMMAND_PATTERNS) {
+    if (pattern.test(command)) {
+      return { config, summaryTemplate };
     }
-    return { config: DEFAULT_TRUNCATION };
   }
+  return { config: DEFAULT_TRUNCATION };
+}
 
-  static truncate(output: string, command: string): TruncationResult {
-    const { config, summaryTemplate } = OutputTruncator.getConfigForCommand(command);
-    return OutputTruncator.truncateWithConfig(output, config, summaryTemplate);
-  }
+export function truncate(output: string, command: string): TruncationResult {
+  const { config, summaryTemplate } = getConfigForCommand(command);
+  return truncateWithConfig(output, config, summaryTemplate);
+}
 
-  static truncateWithConfig(
-    output: string,
-    config: TruncationConfig,
-    summaryTemplate?: (lines: number, chars: number) => string
-  ): TruncationResult {
-    const originalChars = output.length;
-    const lines = output.split('\n');
-    const originalLines = lines.length;
+export function truncateWithConfig(
+  output: string,
+  config: TruncationConfig,
+  summaryTemplate?: (lines: number, chars: number) => string
+): TruncationResult {
+  const originalChars = output.length;
+  const lines = output.split('\n');
+  const originalLines = lines.length;
 
-    if (originalLines <= config.maxLines && originalChars <= config.maxChars) {
-      return {
-        content: output,
-        truncated: false,
-        originalLines,
-        originalChars,
-      };
-    }
-
-    const headLines = lines.slice(0, config.keepHead);
-    const tailLines = lines.slice(-config.keepTail);
-    const truncatedCount = originalLines - config.keepHead - config.keepTail;
-
-    let truncatedContent = headLines.join('\n');
-    truncatedContent += `\n\n... (${truncatedCount} lines truncated, showing first ${config.keepHead} and last ${config.keepTail} of ${originalLines} total) ...\n\n`;
-    truncatedContent += tailLines.join('\n');
-
-    if (truncatedContent.length > config.maxChars) {
-      const halfMax = Math.floor(config.maxChars / 2) - 50;
-      const head = truncatedContent.slice(0, halfMax);
-      const tail = truncatedContent.slice(-halfMax);
-      truncatedContent = `${head}\n\n... (content truncated to ${config.maxChars} chars) ...\n\n${tail}`;
-    }
-
-    const summary = config.summarize && summaryTemplate
-      ? summaryTemplate(originalLines, originalChars)
-      : undefined;
-
-    if (summary) {
-      truncatedContent += `\n\n[Summary: ${summary}]`;
-    }
-
+  if (originalLines <= config.maxLines && originalChars <= config.maxChars) {
     return {
-      content: truncatedContent,
-      truncated: true,
+      content: output,
+      truncated: false,
       originalLines,
       originalChars,
-      summary,
     };
   }
 
-  static truncateForLLM(
-    stdout: string,
-    stderr: string,
-    command: string
-  ): { stdout: string; stderr: string; truncationInfo?: string } {
-    const stdoutResult = OutputTruncator.truncate(stdout, command);
-    const stderrResult = OutputTruncator.truncate(stderr, command);
+  const headLines = lines.slice(0, config.keepHead);
+  const tailLines = lines.slice(-config.keepTail);
+  const truncatedCount = originalLines - config.keepHead - config.keepTail;
 
-    let truncationInfo: string | undefined;
+  let truncatedContent = headLines.join('\n');
+  truncatedContent += `\n\n... (${truncatedCount} lines truncated, showing first ${config.keepHead} and last ${config.keepTail} of ${originalLines} total) ...\n\n`;
+  truncatedContent += tailLines.join('\n');
 
-    if (stdoutResult.truncated || stderrResult.truncated) {
-      const parts: string[] = [];
-      if (stdoutResult.truncated) {
-        parts.push(
-          `stdout: ${stdoutResult.originalLines} lines → ${stdoutResult.content.split('\n').length} lines`
-        );
-      }
-      if (stderrResult.truncated) {
-        parts.push(
-          `stderr: ${stderrResult.originalLines} lines → ${stderrResult.content.split('\n').length} lines`
-        );
-      }
-      truncationInfo = `Output truncated: ${parts.join(', ')}`;
-    }
-
-    return {
-      stdout: stdoutResult.content,
-      stderr: stderrResult.content,
-      truncationInfo,
-    };
+  if (truncatedContent.length > config.maxChars) {
+    const halfMax = Math.floor(config.maxChars / 2) - 50;
+    const head = truncatedContent.slice(0, halfMax);
+    const tail = truncatedContent.slice(-halfMax);
+    truncatedContent = `${head}\n\n... (content truncated to ${config.maxChars} chars) ...\n\n${tail}`;
   }
 
-  static shouldTruncate(output: string, command: string): boolean {
-    const { config } = OutputTruncator.getConfigForCommand(command);
-    const lines = output.split('\n').length;
-    return lines > config.maxLines || output.length > config.maxChars;
+  const summary = config.summarize && summaryTemplate
+    ? summaryTemplate(originalLines, originalChars)
+    : undefined;
+
+  if (summary) {
+    truncatedContent += `\n\n[Summary: ${summary}]`;
   }
 
-  static getStats(output: string): { lines: number; chars: number; words: number } {
-    return {
-      lines: output.split('\n').length,
-      chars: output.length,
-      words: output.split(/\s+/).filter(Boolean).length,
-    };
-  }
+  return {
+    content: truncatedContent,
+    truncated: true,
+    originalLines,
+    originalChars,
+    summary,
+  };
 }
+
+export function truncateForLLM(
+  stdout: string,
+  stderr: string,
+  command: string
+): { stdout: string; stderr: string; truncationInfo?: string } {
+  const stdoutResult = truncate(stdout, command);
+  const stderrResult = truncate(stderr, command);
+
+  let truncationInfo: string | undefined;
+
+  if (stdoutResult.truncated || stderrResult.truncated) {
+    const parts: string[] = [];
+    if (stdoutResult.truncated) {
+      parts.push(
+        `stdout: ${stdoutResult.originalLines} lines → ${stdoutResult.content.split('\n').length} lines`
+      );
+    }
+    if (stderrResult.truncated) {
+      parts.push(
+        `stderr: ${stderrResult.originalLines} lines → ${stderrResult.content.split('\n').length} lines`
+      );
+    }
+    truncationInfo = `Output truncated: ${parts.join(', ')}`;
+  }
+
+  return {
+    stdout: stdoutResult.content,
+    stderr: stderrResult.content,
+    truncationInfo,
+  };
+}
+
+export function shouldTruncate(output: string, command: string): boolean {
+  const { config } = getConfigForCommand(command);
+  const lines = output.split('\n').length;
+  return lines > config.maxLines || output.length > config.maxChars;
+}
+
+export function getStats(output: string): { lines: number; chars: number; words: number } {
+  return {
+    lines: output.split('\n').length,
+    chars: output.length,
+    words: output.split(/\s+/).filter(Boolean).length,
+  };
+}
+
+export const OutputTruncator = { truncate, truncateWithConfig, truncateForLLM, shouldTruncate, getStats };

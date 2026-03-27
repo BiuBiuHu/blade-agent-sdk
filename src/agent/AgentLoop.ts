@@ -433,7 +433,6 @@ export async function* agentLoop(
 
       applyCompactionDecision(messages, limitDecision.compactedMessages, limitDecision.continueMessage);
       turnsCount = 0;
-      continue;
     }
   }
 }

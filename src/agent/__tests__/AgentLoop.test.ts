@@ -14,7 +14,7 @@ function createMockExecutionPipeline(results?: Record<string, ToolResult>) {
       get: (name: string) => ({ kind: 'execute', name }),
     }),
     execute: mock(async (toolName: string, _params: unknown, _ctx: unknown) => {
-      if (results && results[toolName]) return results[toolName];
+      if (results?.[toolName]) return results[toolName];
       return {
         success: true,
         llmContent: `Result of ${toolName}`,

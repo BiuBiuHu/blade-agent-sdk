@@ -11,7 +11,14 @@ mock.module('../../services/ChatServiceInterface.js', () => ({
   createChatServiceAsync: mockCreateChatServiceAsync,
 }));
 
-const { CompactionService } = await import('../CompactionService.js');
+mock.module('../FileAnalyzer.js', () => ({
+  FileAnalyzer: {
+    analyzeFiles: () => [],
+    readFilesContent: async () => [],
+  },
+}));
+
+const { compact } = await import('../CompactionService.js');
 
 describe('CompactionService', () => {
   beforeEach(() => {
@@ -21,13 +28,7 @@ describe('CompactionService', () => {
   it('uses the native openai provider for official OpenAI compaction requests', async () => {
     const messages: Message[] = [{ role: 'user', content: 'hello' }];
 
-    await (CompactionService as unknown as {
-      generateSummary: (
-        messages: Message[],
-        fileContents: unknown[],
-        options: Record<string, unknown>,
-      ) => Promise<string>;
-    }).generateSummary(messages, [], {
+    await compact(messages, {
       trigger: 'manual',
       modelName: 'gpt-5',
       maxContextTokens: 128000,
