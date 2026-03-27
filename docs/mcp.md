@@ -1,85 +1,120 @@
-# MCP
+# MCP 协议集成
 
-Blade Agent SDK 支持把 MCP server 作为 Session 的一部分接入。
+MCP（Model Context Protocol）是连接 LLM 与外部工具、数据源的标准协议。Blade Agent SDK 支持连接外部 MCP Server，也支持在进程内创建 MCP Server。
 
-## 1. 在 Session 中连接外部 MCP server
+## 连接外部 MCP Server
+
+在 `createSession` 的 `mcpServers` 中配置：
 
 ```ts
 import { createSession } from '@blade-ai/agent-sdk';
 
 const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
-  model: 'gpt-4o-mini',
+  provider: { type: 'anthropic', apiKey: process.env.ANTHROPIC_API_KEY },
+  model: 'claude-sonnet-4-20250514',
   mcpServers: {
     filesystem: {
       type: 'stdio',
       command: 'npx',
-      args: ['-y', '@anthropic-ai/mcp-server-filesystem', '/workspace/project'],
-    },
-    github: {
-      type: 'stdio',
-      command: 'npx',
-      args: ['-y', '@anthropic-ai/mcp-server-github'],
-      env: {
-        GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? '',
-      },
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
     },
   },
 });
 ```
 
-## 2. 支持的 server 配置
+### 三种传输模式
 
-`SessionOptions.mcpServers` 支持：
+**stdio — 本地子进程**
 
-- stdio server
-- SSE server
-- HTTP server
-- `SdkMcpServerHandle` in-process server
-
-### stdio
+最常见的模式，SDK 启动子进程并通过 stdin/stdout 通信：
 
 ```ts
-{
-  type: 'stdio',
-  command: 'npx',
-  args: ['-y', 'my-mcp-server'],
-  env: { TOKEN: '...' },
+mcpServers: {
+  github: {
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-github'],
+    env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN },
+  },
 }
 ```
 
-### SSE
+**SSE — Server-Sent Events**
+
+适用于远程 MCP 服务器：
 
 ```ts
-{
-  type: 'sse',
-  url: 'https://example.com/mcp/sse',
-  headers: { Authorization: 'Bearer ...' },
+mcpServers: {
+  remote: {
+    type: 'sse',
+    url: 'https://mcp.example.com/sse',
+    headers: { Authorization: `Bearer ${token}` },
+  },
 }
 ```
 
-### HTTP
+**HTTP — Streamable HTTP**
+
+适用于支持 HTTP 传输的 MCP 服务器：
 
 ```ts
-{
-  type: 'http',
-  url: 'https://example.com/mcp',
-  headers: { Authorization: 'Bearer ...' },
+mcpServers: {
+  api: {
+    type: 'http',
+    url: 'https://mcp.example.com/mcp',
+  },
 }
 ```
 
-## 3. 查询和管理运行时状态
+## McpServerConfig 完整参考
 
 ```ts
-const status = await session.mcpServerStatus();
-const tools = await session.mcpListTools();
-
-await session.mcpConnect('filesystem');
-await session.mcpDisconnect('filesystem');
-await session.mcpReconnect('filesystem');
+interface McpServerConfig {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  disabled?: boolean;
+  alwaysAllow?: string[];
+  type?: 'stdio' | 'sse' | 'http';
+  url?: string;
+  headers?: Record<string, string>;
+  oauth?: {
+    provider: string;
+    clientId?: string;
+    enabled?: boolean;
+  };
+  healthCheck?: {
+    enabled?: boolean;
+    intervalMs?: number;
+  };
+}
 ```
 
-`mcpServerStatus()` 返回：
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `command` | `string` | stdio 模式的启动命令 |
+| `args` | `string[]` | 命令参数 |
+| `env` | `Record<string, string>` | 子进程环境变量 |
+| `disabled` | `boolean` | 暂时禁用此服务器 |
+| `alwaysAllow` | `string[]` | 自动授权的工具名列表（跳过权限检查） |
+| `type` | `'stdio' \| 'sse' \| 'http'` | 传输模式 |
+| `url` | `string` | SSE/HTTP 模式的服务器 URL |
+| `headers` | `Record<string, string>` | SSE/HTTP 的请求头 |
+| `oauth` | `object` | OAuth 认证配置 |
+| `healthCheck` | `object` | 健康检查配置 |
+
+## 运行时管理
+
+Session 提供了完整的 MCP 运行时管理 API：
+
+### 查看服务器状态
+
+```ts
+const statuses = await session.mcpServerStatus();
+for (const s of statuses) {
+  console.log(`${s.name}: ${s.status} (${s.toolCount} tools)`);
+}
+```
 
 ```ts
 interface McpServerStatus {
@@ -92,7 +127,22 @@ interface McpServerStatus {
 }
 ```
 
-`mcpListTools()` 返回：
+### 连接/断开/重连
+
+```ts
+await session.mcpConnect('github');
+await session.mcpDisconnect('github');
+await session.mcpReconnect('github');
+```
+
+### 列出可用工具
+
+```ts
+const tools = await session.mcpListTools();
+for (const t of tools) {
+  console.log(`${t.serverName}/${t.name}: ${t.description}`);
+}
+```
 
 ```ts
 interface McpToolInfo {
@@ -102,75 +152,207 @@ interface McpToolInfo {
 }
 ```
 
-## 4. 定义 in-process MCP server
+## 创建进程内 MCP Server
 
-如果你不想启动额外进程，可以直接在当前应用内定义 MCP server。
+当你需要用 TypeScript 编写自定义工具时，可以用 `tool()` 和 `createSdkMcpServer()` 创建进程内 MCP Server，无需启动额外进程：
 
 ```ts
-import { createSdkMcpServer, tool } from '@blade-ai/agent-sdk';
+import { tool, createSdkMcpServer, createSession } from '@blade-ai/agent-sdk';
 import { z } from 'zod';
 
-const greet = tool(
-  'greet',
-  'Greet a user by name',
-  { name: z.string() },
-  async ({ name }) => ({
-    content: [{ type: 'text', text: `Hello, ${name}!` }],
+// 定义工具（使用 Zod Schema）
+const getWeather = tool(
+  'get-weather',
+  '查询指定城市的当前天气',
+  { city: z.string().describe('城市名称') },
+  async ({ city }) => ({
+    content: [{ type: 'text', text: `${city}: 晴 25°C` }],
   }),
 );
 
-const greetServer = await createSdkMcpServer({
-  name: 'greetings',
+const queryDB = tool(
+  'query-database',
+  '执行 SQL 查询',
+  {
+    sql: z.string().describe('SQL 语句'),
+    database: z.string().default('main').describe('数据库名'),
+  },
+  async ({ sql, database }) => {
+    const result = await executeSQL(database, sql);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  },
+);
+
+// 创建 MCP Server
+const myServer = await createSdkMcpServer({
+  name: 'my-tools',
   version: '1.0.0',
-  tools: [greet],
+  tools: [getWeather, queryDB],
 });
-```
 
-然后把这个 handle 传给 `mcpServers`：
-
-```ts
+// 在 Session 中使用
 const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
-  model: 'gpt-4o-mini',
+  provider: { type: 'openai', apiKey: process.env.OPENAI_API_KEY },
+  model: 'gpt-4o',
   mcpServers: {
-    greetings: greetServer,
+    myTools: myServer,  // SdkMcpServerHandle
   },
 });
 ```
 
-## 5. MCP tool authoring contract
+::: tip
+进程内 MCP Server 不会启动子进程，直接在当前进程中执行，性能更高、调试更方便。
+:::
 
-### `tool()`
+### tool() 函数签名
 
 ```ts
-tool(
+function tool<T extends ZodRawShape>(
   name: string,
   description: string,
-  schema: Record<string, z.ZodTypeAny>,
-  handler: (params) => Promise<McpToolResponse>,
-)
+  schema: T,
+  handler: (params: z.infer<z.ZodObject<T>>) => Promise<McpToolCallResponse>,
+): SdkTool;
 ```
 
-### `createSdkMcpServer()`
+### McpToolCallResponse
 
 ```ts
-createSdkMcpServer({
-  name: string,
-  version: string,
-  tools: SdkTool[],
-})
+interface McpToolCallResponse {
+  content: Array<{ type: 'text'; text: string }>;
+  isError?: boolean;
+}
 ```
 
-## 6. JSON Schema 兼容
+## alwaysAllow 自动授权
 
-SDK 会把 MCP tool 的 `inputSchema` 转成内部参数 schema。常见的 object / enum / nullable / local `$ref` 都会处理；无法安全转换时，会降级成更宽松的记录类型，以保证 server 不因 schema 问题直接不可用。
+对于信任的 MCP 工具，可以跳过权限检查：
 
-## 7. 当前公开边界
+```ts
+mcpServers: {
+  filesystem: {
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
+    alwaysAllow: ['read_file', 'list_directory'],  // 这些工具不需要权限确认
+  },
+}
+```
 
-MCP 在根导出里保留的是“接入 contract”，不再公开这些内部实现：
+::: warning
+`alwaysAllow` 仅影响权限提示，不影响沙箱限制。即使自动授权，沙箱仍然会限制实际执行范围。
+:::
 
-- `McpRegistry`
-- `McpClient`
-- `HealthMonitor`
+## OAuth 认证
 
-如果你只是接入 SDK，通常不需要直接操作这些对象。
+远程 MCP 服务器可以使用 OAuth 进行认证：
+
+```ts
+mcpServers: {
+  enterprise: {
+    type: 'http',
+    url: 'https://mcp.enterprise.com/api',
+    oauth: {
+      provider: 'github',
+      clientId: 'your-client-id',
+      enabled: true,
+    },
+  },
+}
+```
+
+## 健康检查
+
+启用健康检查后，SDK 会定期检测 MCP 服务器状态，自动发现连接中断：
+
+```ts
+mcpServers: {
+  critical: {
+    type: 'stdio',
+    command: 'my-mcp-server',
+    healthCheck: {
+      enabled: true,
+      intervalMs: 30000,  // 每 30 秒检查一次
+    },
+  },
+}
+```
+
+## 实战示例
+
+### 多服务器组合
+
+```ts
+import { tool, createSdkMcpServer, createSession } from '@blade-ai/agent-sdk';
+import { z } from 'zod';
+
+// 进程内工具
+const analyzeCode = tool(
+  'analyze-code',
+  '分析代码质量',
+  { filePath: z.string() },
+  async ({ filePath }) => {
+    const result = await runLinter(filePath);
+    return { content: [{ type: 'text', text: result }] };
+  },
+);
+
+const codeAnalyzer = await createSdkMcpServer({
+  name: 'code-analyzer',
+  version: '1.0.0',
+  tools: [analyzeCode],
+});
+
+const session = await createSession({
+  provider: { type: 'anthropic', apiKey: process.env.ANTHROPIC_API_KEY },
+  model: 'claude-sonnet-4-20250514',
+  mcpServers: {
+    // 外部：文件系统
+    filesystem: {
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '.'],
+    },
+    // 外部：GitHub
+    github: {
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-github'],
+      env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN },
+    },
+    // 进程内：自定义分析工具
+    analyzer: codeAnalyzer,
+  },
+});
+```
+
+### 动态连接管理
+
+```ts
+const session = await createSession({
+  provider: { type: 'openai', apiKey: process.env.OPENAI_API_KEY },
+  model: 'gpt-4o',
+  mcpServers: {
+    github: {
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-github'],
+      disabled: true,  // 先不连接
+    },
+  },
+});
+
+// 需要时手动连接
+await session.mcpConnect('github');
+
+// 查看状态
+const status = await session.mcpServerStatus();
+console.log(status);
+
+// 列出所有可用 MCP 工具
+const tools = await session.mcpListTools();
+console.log(`共 ${tools.length} 个 MCP 工具`);
+
+// 用完断开
+await session.mcpDisconnect('github');
+```

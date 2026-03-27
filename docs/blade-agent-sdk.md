@@ -1,67 +1,28 @@
-# Blade Agent SDK 总览
+# 概览
 
-Blade Agent SDK 是一个 session-first 的开源 Agent SDK。它把会话、工具执行、MCP、权限控制、Hooks 和沙箱约束组织成统一的 Session API。
+`@blade-ai/agent-sdk` 是一个 **Session-first** 的 AI Agent 开发框架。它将会话管理、工具执行、MCP 协议、权限控制、生命周期钩子和沙箱安全统一封装在 Session API 中，让你用最少的代码构建功能完整的 AI Agent 应用。
 
-## 设计取向
+适合构建：CLI 助手、IDE 插件、自动化工作流、对话式开发工具、多 Agent 协作系统。
 
-- 对外主入口是 Session，而不是内部 manager/service
-- `send()` / `stream()` 是核心交互模型
-- 工具、MCP、权限和 Hooks 都围绕单个会话运行
-- SDK 暴露 contract，不暴露大部分内部实现对象
+## 安装
 
-## 根导出包含什么
+```bash
+npm install @blade-ai/agent-sdk
+# 或
+bun add @blade-ai/agent-sdk
+```
 
-当前根包主要暴露 5 组能力：
-
-1. Session API
-   - `createSession`
-   - `resumeSession`
-   - `forkSession`
-   - `prompt`
-
-2. Session contract types
-   - `ISession`
-   - `SessionOptions`
-   - `SendOptions`
-   - `StreamOptions`
-   - `StreamMessage`
-   - `PromptResult`
-
-3. Tool authoring
-   - `createTool`
-   - `defineTool`
-   - `toolFromDefinition`
-   - `getBuiltinTools`
-   - `ToolDefinition`
-   - `ToolResult`
-   - `ExecutionContext`
-
-4. MCP authoring
-   - `tool`
-   - `createSdkMcpServer`
-   - `SdkTool`
-   - `SdkMcpServerHandle`
-
-5. Runtime contract
-   - `PermissionMode`
-   - `HookEvent`
-   - `ToolKind`
-   - `CanUseTool`
-   - `AgentLogger`
-   - `SandboxSettings`
-   - `OutputFormat`
-
-## 最小示例
+## 最小示例：流式对话
 
 ```ts
 import { createSession } from '@blade-ai/agent-sdk';
 
 const session = await createSession({
-  provider: { type: 'openai-compatible', apiKey: process.env.API_KEY },
-  model: 'gpt-4o-mini',
+  provider: { type: 'openai', apiKey: process.env.OPENAI_API_KEY! },
+  model: 'gpt-4o',
 });
 
-await session.send('总结这个仓库的公开 API');
+await session.send('用三句话解释什么是 TypeScript');
 
 for await (const event of session.stream()) {
   if (event.type === 'content') {
@@ -72,103 +33,122 @@ for await (const event of session.stream()) {
 session.close();
 ```
 
-## 会话模型
-
-一个 Session 有这些主要能力：
-
-- 保存消息历史
-- 发送用户消息
-- 流式接收 Agent 输出
-- 动态切换模型和权限模式
-- 连接、断开和查询 MCP server
-- 基于持久化历史恢复或分叉
-
-Session 默认是“可持久化”的，但不强制要求本地落盘：
-
-- 默认情况下，SDK 会把会话历史写入本地存储，适合 CLI / IDE / 本地服务
-- 如果传入 `persistSession: false`，则会切换到仅内存模式，适合 Web / Serverless
-- 仅内存模式下仍然支持当前实例内的多轮对话，但不支持 `resumeSession()` 这类依赖磁盘历史的 API
-
-相关文档见 [Session](./session.md)。
-
-## 工具系统
-
-Session 默认会装配内置工具。你也可以通过 `tools` 传入自定义工具。
+## 最小示例：一次性调用
 
 ```ts
-import { defineTool } from '@blade-ai/agent-sdk';
+import { prompt } from '@blade-ai/agent-sdk';
 
-const echoTool = defineTool({
-  name: 'Echo',
-  description: 'Echo text back',
+const result = await prompt('列出当前目录下的所有 TypeScript 文件', {
+  provider: { type: 'openai', apiKey: process.env.OPENAI_API_KEY! },
+  model: 'gpt-4o',
+});
+
+console.log(result.result);
+console.log(`耗时 ${result.duration}ms，使用了 ${result.toolCalls.length} 次工具`);
+```
+
+## 带自定义工具的示例
+
+```ts
+import { createSession, defineTool } from '@blade-ai/agent-sdk';
+
+const weatherTool = defineTool({
+  name: 'GetWeather',
+  description: '查询指定城市的天气',
   parameters: {
     type: 'object',
     properties: {
-      text: { type: 'string' },
+      city: { type: 'string', description: '城市名称' },
     },
-    required: ['text'],
+    required: ['city'],
   },
   execute: async (params) => ({
     success: true,
-    llmContent: String(params.text),
-    displayContent: String(params.text),
+    llmContent: `${params.city}: 晴 25°C`,
+    displayContent: `查询天气: ${params.city}`,
   }),
 });
+
+const session = await createSession({
+  provider: { type: 'openai', apiKey: process.env.OPENAI_API_KEY! },
+  model: 'gpt-4o',
+  tools: [weatherTool],
+});
+
+await session.send('北京今天天气怎么样？');
+for await (const event of session.stream()) {
+  if (event.type === 'content') process.stdout.write(event.delta);
+}
+session.close();
 ```
 
-## Hooks
+## 核心概念
 
-Hooks 使用 callback 形式配置在 `SessionOptions.hooks` 上，不再使用 shell-style hook 配置对象。
+### Session-first 设计
 
-支持的事件：
+SDK 的所有能力都围绕 **Session（会话）** 组织。Session 是唯一的入口：
 
-- `SessionStart`
-- `SessionEnd`
-- `UserPromptSubmit`
-- `PermissionRequest`
-- `PreToolUse`
-- `PostToolUse`
-- `PostToolUseFailure`
-- `TaskCompleted`
+```
+createSession() → ISession
+                    ├── send()     发送用户消息
+                    ├── stream()   流式接收 Agent 输出
+                    ├── close()    关闭会话
+                    ├── abort()    中断当前执行
+                    ├── fork()     分叉会话
+                    ├── setModel() / setPermissionMode() / setMaxTurns()
+                    ├── mcpConnect() / mcpDisconnect() / mcpListTools()
+                    └── getDefaultContext() / setDefaultContext()
+```
 
-相关文档见 [Hooks](./hooks.md)。
+### send() + stream() 交互模型
 
-## MCP
+每一轮交互遵循固定模式：
 
-SDK 支持两种 MCP 接入方式：
-
-- 在 Session 中连接外部 MCP server
-- 用 `tool()` + `createSdkMcpServer()` 定义 in-process MCP server
-
-相关文档见 [MCP](./mcp.md)。
-
-## 沙箱
-
-命令执行的沙箱通过 `SessionOptions.sandbox` 配置，不需要直接访问内部 sandbox service。
-
-相关文档见 [Sandbox](./sandbox.md)。
-
-## 日志
-
-SDK 不内置日志实现，只接受用户提供的 `AgentLogger`：
+1. 调用 `send(message)` 提交用户消息
+2. 调用 `stream()` 获取异步迭代器，消费所有流式事件
+3. Agent 自动执行工具调用，完成多轮推理后结束
 
 ```ts
-import type { AgentLogger, LogEntry } from '@blade-ai/agent-sdk';
+await session.send('重构 src/utils.ts 中的 parseDate 函数');
 
-const logger: AgentLogger = {
-  log(entry: LogEntry) {
-    console.log(entry.timestamp, entry.level, entry.category, entry.message);
-  },
-};
+for await (const msg of session.stream()) {
+  switch (msg.type) {
+    case 'content':
+      process.stdout.write(msg.delta);
+      break;
+    case 'tool_use':
+      console.log(`\n调用工具: ${msg.name}`);
+      break;
+    case 'tool_result':
+      console.log(`工具结果: ${msg.name} → ${msg.isError ? '失败' : '成功'}`);
+      break;
+    case 'error':
+      console.error(`错误: ${msg.message}`);
+      break;
+  }
+}
 ```
 
-## 当前不再提供的能力
+### 会话持久化
 
-以下能力已经不再是公开 SDK contract：
+Session 默认启用持久化（写入本地磁盘），支持通过 `resumeSession()` 恢复历史会话。
 
-- 文件 checkpoint / rewind
-- 根导出的 `Agent`
-- 根导出的 `ContextManager` / `ExecutionPipeline` / `ToolRegistry`
-- 根导出的 `McpRegistry` / `McpClient`
-- 根导出的 `SandboxService` / `SandboxExecutor`
-- shell-style hooks 配置和 `HookManager` public API
+| 模式 | 配置 | 适用场景 |
+|------|------|----------|
+| 持久化（默认） | `persistSession: true` | CLI / IDE / 本地服务 |
+| 仅内存 | `persistSession: false` | Web / Serverless / 无状态 |
+
+## 多模型支持
+
+原生支持 6 种 Provider：
+
+| Provider | `type` 值 | 说明 |
+|----------|-----------|------|
+| OpenAI | `'openai'` | 官方 OpenAI API |
+| Anthropic | `'anthropic'` | Claude 系列模型 |
+| Azure OpenAI | `'azure-openai'` | Azure 托管的 OpenAI |
+| Gemini | `'gemini'` | Google Gemini 系列 |
+| DeepSeek | `'deepseek'` | DeepSeek 模型 |
+| OpenAI 兼容 | `'openai-compatible'` | 任何兼容 OpenAI API 的服务 |
+
+详见 [Provider 配置](./providers)。

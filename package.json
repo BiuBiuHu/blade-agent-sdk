@@ -29,7 +29,10 @@
     "release:dry": "bun run scripts/release.js --dry-run",
     "release:major": "bun run scripts/release.js --major",
     "release:minor": "bun run scripts/release.js --minor",
-    "release:patch": "bun run scripts/release.js --patch"
+    "release:patch": "bun run scripts/release.js --patch",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "keywords": [
     "sdk",
@@ -89,6 +92,7 @@
     "@types/write-file-atomic": "^4.0.3",
     "@types/ws": "^8.5.12",
     "bun-types": "latest",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitepress": "^1.6.4"
   }
 }
